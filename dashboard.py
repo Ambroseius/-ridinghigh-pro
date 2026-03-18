@@ -12,6 +12,8 @@ import time
 import plotly.express as px
 from finvizfinance.screener.overview import Overview
 from datetime import datetime, time as dt_time
+import pytz
+import pytz
 from data_logger import DataLogger
 import yfinance as yf
 from ta.momentum import RSIIndicator
@@ -986,7 +988,8 @@ class PortfolioTracker:
             return False
 
 def is_market_hours():
-    now = datetime.now()
+    peru_tz = pytz.timezone("America/Lima")
+    now = datetime.now(peru_tz)
     market_open = dt_time(8, 30)
     market_close = dt_time(15, 0)
     current_time = now.time()
@@ -994,7 +997,8 @@ def is_market_hours():
     return is_weekday and market_open <= current_time <= market_close
 
 def check_snapshot_time():
-    now = datetime.now()
+    peru_tz = pytz.timezone("America/Lima")
+    now = datetime.now(peru_tz)
     snapshot_time = dt_time(14, 59)
     current_time = now.time()
     
