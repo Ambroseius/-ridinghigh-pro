@@ -18,6 +18,7 @@ from ta.momentum import RSIIndicator
 from ta.volatility import AverageTrueRange
 import os
 import shutil
+from gsheets_sync import save_snapshot_to_sheets, save_timeline_to_sheets, save_portfolio_to_sheets, load_portfolio_from_sheets, load_timeline_dates_from_sheets, load_timeline_from_sheets
 import json
 
 st.set_page_config(
@@ -781,6 +782,7 @@ class LiveTracker:
             
             df = pd.DataFrame(results)
             df.to_csv(snapshot_file, index=False)
+            save_snapshot_to_sheets(df)
             
             return True
         except:
@@ -817,6 +819,8 @@ class LiveTracker:
             archive_file = os.path.join(self.archive_dir, f"timeline_{today}.csv")
             
             shutil.copy2(self.today_file, archive_file)
+            archive_df = pd.read_csv(self.today_file, index_col=0)
+            save_timeline_to_sheets(archive_df, today)
             return True
         except:
             return False
@@ -905,6 +909,7 @@ class PortfolioTracker:
             new_df = pd.DataFrame(new_positions)
             combined_df = pd.concat([existing_df, new_df], ignore_index=True)
             combined_df.to_csv(self.portfolio_file, index=False)
+            save_portfolio_to_sheets(combined_df)
             return len(new_positions)
         
         return 0

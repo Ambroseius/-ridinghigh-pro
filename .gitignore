@@ -29,3 +29,4 @@ data/
 # Old files
 *.pyes
 *.pyrtyhc
+google_credentials.json
