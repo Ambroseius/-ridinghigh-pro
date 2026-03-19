@@ -1151,7 +1151,12 @@ def main_page():
         # ── Cloud mode: read from Google Sheets ──────────────────────────
         time_diff = 999
         if st.session_state.last_scan:
-            time_diff = (datetime.now() - st.session_state.last_scan).total_seconds()
+            import pytz
+        _now = datetime.now(pytz.timezone('America/Lima'))
+        _last = st.session_state.last_scan
+        if _last.tzinfo is None:
+            _last = pytz.timezone('America/Lima').localize(_last)
+        time_diff = (_now - _last).total_seconds()
         
         if st.session_state.force_scan or st.session_state.last_scan is None or time_diff >= 60:
             st.session_state.force_scan = False
@@ -1173,7 +1178,12 @@ def main_page():
             if st.session_state.last_scan is None:
                 should_scan = True
             else:
-                time_diff = (datetime.now() - st.session_state.last_scan).total_seconds()
+                import pytz
+        _now = datetime.now(pytz.timezone('America/Lima'))
+        _last = st.session_state.last_scan
+        if _last.tzinfo is None:
+            _last = pytz.timezone('America/Lima').localize(_last)
+        time_diff = (_now - _last).total_seconds()
                 if time_diff >= 60:
                     should_scan = True
         
