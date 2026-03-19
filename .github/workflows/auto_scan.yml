@@ -30,3 +30,4 @@ jobs:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
         run: |
           python auto_scanner.py
+# trigger
