@@ -1164,10 +1164,6 @@ def main_page():
                 else:
                     st.sidebar.info("⏳ Waiting for next scan...")
         
-        if auto_scan:
-            time.sleep(2)
-            st.rerun()
-    else:
         # ── Local mode: scan directly ─────────────────────────────────────
         if st.session_state.force_scan:
             should_scan = True
