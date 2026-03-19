@@ -2,10 +2,8 @@ name: RidingHigh Auto Scanner
 
 on:
   schedule:
-    # Every minute Mon-Fri 13:30-20:00 UTC (= 08:30-15:00 Peru)
-    - cron: '* 13-19 * * 1-5'
-    - cron: '* 20 * * 1-5'
-  workflow_dispatch:  # Manual trigger for testing
+    - cron: '* * * * *'
+  workflow_dispatch:
 
 jobs:
   scan:
@@ -30,4 +28,3 @@ jobs:
           GOOGLE_CREDENTIALS_JSON: ${{ secrets.GOOGLE_CREDENTIALS_JSON }}
         run: |
           python auto_scanner.py
-# trigger
