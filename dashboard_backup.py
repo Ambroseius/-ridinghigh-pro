@@ -987,15 +987,6 @@ class PortfolioTracker:
         except:
             return False
 
-
-def is_cloud():
-    """Check if running on Streamlit Cloud"""
-    try:
-        import streamlit as st
-        return "gcp_service_account" in st.secrets
-    except:
-        return False
-
 def is_market_hours():
     peru_tz = pytz.timezone("America/Lima")
     now = datetime.now(peru_tz)
@@ -1012,79 +1003,6 @@ def check_snapshot_time():
     current_time = now.time()
     
     return snapshot_time <= current_time < dt_time(15, 0)
-
-def load_from_sheets():
-    """Load latest scan data from Google Sheets"""
-    try:
-        from gsheets_sync import get_gsheets_client, SPREADSHEET_ID, get_or_create_sheet
-        gc = get_gsheets_client()
-        sh = gc.open_by_key(SPREADSHEET_ID)
-        ws = get_or_create_sheet(sh, "timeline_live")
-        data = ws.get_all_values()
-        if len(data) <= 1:
-            return None, None
-        df = pd.DataFrame(data[1:], columns=data[0])
-        if df.empty:
-            return None, None
-        # Get today only
-        import pytz
-        today = datetime.now(pytz.timezone("America/Lima")).strftime("%Y-%m-%d")
-        today_df = df[df["Date"] == today]
-        if today_df.empty:
-            return None, None
-        # Get latest scan time
-        latest_time = today_df["ScanTime"].max()
-        latest_df = today_df[today_df["ScanTime"] == latest_time]
-        # Convert to results format
-        results = []
-        for _, row in latest_df.iterrows():
-            try:
-                results.append({
-                    "Ticker": row["Ticker"],
-                    "Score": float(row["Score"]) if row["Score"] not in ["nan", ""] else 0,
-                    "Price": float(row["Price"]) if row["Price"] not in ["nan", ""] else 0,
-                    "Change": float(row["Change"]) if row["Change"] not in ["nan", ""] else 0,
-                    "MxV": float(row["MxV"]) if row["MxV"] not in ["nan", ""] else 0,
-                    "PriceTo52WHigh": float(row["PriceTo52WHigh"]) if row["PriceTo52WHigh"] not in ["nan", ""] else 0,
-                    "PriceToHigh": float(row["PriceToHigh"]) if row["PriceToHigh"] not in ["nan", ""] else 0,
-                    "RSI": float(row["RSI"]) if row["RSI"] not in ["nan", ""] else 0,
-                    "ATRX": float(row["ATRX"]) if row["ATRX"] not in ["nan", ""] else 0,
-                    "REL_VOL": float(row["REL_VOL"]) if row["REL_VOL"] not in ["nan", ""] else 0,
-                    "RunUp": float(row["RunUp"]) if row["RunUp"] not in ["nan", ""] else 0,
-                    "Float%": float(row["Float%"]) if row["Float%"] not in ["nan", ""] else 0,
-                    "Gap": float(row["Gap"]) if row["Gap"] not in ["nan", ""] else 0,
-                    "VWAP": float(row["VWAP"]) if row["VWAP"] not in ["nan", ""] else 0,
-                })
-            except:
-                continue
-        return results, latest_time
-    except Exception as e:
-        st.error(f"Error loading from Sheets: {e}")
-        return None, None
-
-def load_timeline_from_sheets_today():
-    """Load today timeline grid from Google Sheets"""
-    try:
-        from gsheets_sync import get_gsheets_client, SPREADSHEET_ID, get_or_create_sheet
-        import pytz
-        gc = get_gsheets_client()
-        sh = gc.open_by_key(SPREADSHEET_ID)
-        ws = get_or_create_sheet(sh, "timeline_live")
-        data = ws.get_all_values()
-        if len(data) <= 1:
-            return None
-        df = pd.DataFrame(data[1:], columns=data[0])
-        today = datetime.now(pytz.timezone("America/Lima")).strftime("%Y-%m-%d")
-        today_df = df[df["Date"] == today].copy()
-        if today_df.empty:
-            return None
-        # Pivot: Ticker vs ScanTime
-        today_df["Score"] = pd.to_numeric(today_df["Score"], errors="coerce")
-        pivot = today_df.pivot_table(index="Ticker", columns="ScanTime", values="Score", aggfunc="last")
-        pivot = pivot[sorted(pivot.columns, reverse=True)]
-        return pivot.round(2)
-    except:
-        return None
 
 def main_page():
     st.title("🚀 RidingHigh Pro v14.1")
@@ -1147,79 +1065,57 @@ def main_page():
     
     should_scan = False
     
-    if is_cloud():
-        # ── Cloud mode: read from Google Sheets ──────────────────────────
-        time_diff = 999
-        if st.session_state.last_scan:
-            time_diff = (datetime.now() - st.session_state.last_scan).total_seconds()
-        
-        if st.session_state.force_scan or st.session_state.last_scan is None or time_diff >= 60:
-            st.session_state.force_scan = False
-            with st.spinner("📡 Loading from Google Sheets..."):
-                results, latest_time = load_from_sheets()
-                if results:
-                    st.session_state.results = results
-                    st.session_state.last_scan = datetime.now()
-                    st.sidebar.success(f"✅ {len(results)} stocks loaded! (scan: {latest_time})")
-                else:
-                    st.sidebar.info("⏳ Waiting for next scan...")
-        
-        if auto_scan:
-            time.sleep(2)
-            st.rerun()
-    else:
-        # ── Local mode: scan directly ─────────────────────────────────────
-        if st.session_state.force_scan:
+    if st.session_state.force_scan:
+        should_scan = True
+        st.session_state.force_scan = False
+    elif auto_scan:
+        if st.session_state.last_scan is None:
             should_scan = True
-            st.session_state.force_scan = False
-        elif auto_scan:
-            if st.session_state.last_scan is None:
+        else:
+            time_diff = (datetime.now() - st.session_state.last_scan).total_seconds()
+            if time_diff >= 60:
                 should_scan = True
-            else:
-                time_diff = (datetime.now() - st.session_state.last_scan).total_seconds()
-                if time_diff >= 60:
-                    should_scan = True
+    
+    if should_scan:
+        scan_start_time = datetime.now()
         
-        if should_scan:
-            scan_start_time = datetime.now()
+        with st.sidebar:
+            progress_placeholder = st.empty()
             
-            with st.sidebar:
-                progress_placeholder = st.empty()
+            def show_progress(current, total, ticker):
+                progress_placeholder.info(f"🔍 Loading {ticker} ({current}/{total})")
+            
+            with st.spinner("🔍 Scanning..."):
+                tracker = LiveTracker()
                 
-                def show_progress(current, total, ticker):
-                    progress_placeholder.info(f"🔍 Loading {ticker} ({current}/{total})")
+                tracked_tickers = tracker.get_tracked_tickers()
                 
-                with st.spinner("🔍 Scanning..."):
-                    tracker = LiveTracker()
+                skip_preload = st.session_state.preload_done
+                
+                results = st.session_state.dashboard.scan(
+                    tracked_tickers=tracked_tickers,
+                    progress_callback=show_progress if not skip_preload else None,
+                    skip_preload=skip_preload
+                )
+                
+                st.session_state.results = results
+                st.session_state.last_scan = scan_start_time
+                st.session_state.preload_done = True
+                
+                progress_placeholder.empty()
+                
+                if results:
+                    logger = DataLogger()
+                    logger.save_daily_snapshot(results)
                     
-                    tracked_tickers = tracker.get_tracked_tickers()
+                    added_count = tracker.add_minute_data(results, scan_start_time)
                     
-                    skip_preload = st.session_state.preload_done
-                    
-                    results = st.session_state.dashboard.scan(
-                        tracked_tickers=tracked_tickers,
-                        progress_callback=show_progress if not skip_preload else None,
-                        skip_preload=skip_preload
-                    )
-                    
-                    st.session_state.results = results
-                    st.session_state.last_scan = scan_start_time
-                    st.session_state.preload_done = True
-                    
-                    progress_placeholder.empty()
-                    
-                    if results:
-                        logger = DataLogger()
-                        logger.save_daily_snapshot(results)
-                        
-                        added_count = tracker.add_minute_data(results, scan_start_time)
-                        
-                        st.success(f"✅ {len(results)} stocks tracked!")
-                    else:
-                        st.warning("⚠️ No stocks")
-                    
-                    time.sleep(1)
-            st.rerun()
+                    st.success(f"✅ {len(results)} stocks tracked!")
+                else:
+                    st.warning("⚠️ No stocks")
+                
+                time.sleep(1)
+        st.rerun()
     
     st.subheader("📊 TABLE 1: Live Scanner")
     
@@ -1287,11 +1183,8 @@ def main_page():
     st.markdown("---")
     st.subheader("⏱️ TABLE 2: Timeline Grid")
     
-    if is_cloud():
-        df_timeline = load_timeline_from_sheets_today()
-    else:
-        tracker = LiveTracker()
-        df_timeline = tracker.get_today_grid()
+    tracker = LiveTracker()
+    df_timeline = tracker.get_today_grid()
     
     if df_timeline is None or df_timeline.empty:
         st.info("📊 No timeline data yet")
@@ -1345,24 +1238,8 @@ def main_page():
 def daily_summary_page():
     st.title("📅 DAILY SUMMARY")
     
-    if is_cloud():
-        try:
-            from gsheets_sync import get_gsheets_client, SPREADSHEET_ID, get_or_create_sheet
-            gc = get_gsheets_client()
-            sh = gc.open_by_key(SPREADSHEET_ID)
-            ws = get_or_create_sheet(sh, "daily_snapshots")
-            data = ws.get_all_values()
-            if len(data) <= 1:
-                st.warning("⚠️ No data yet")
-                return
-            all_df = pd.DataFrame(data[1:], columns=data[0])
-            dates = sorted(all_df["Date"].unique().tolist(), reverse=True)
-        except Exception as e:
-            st.error(f"Error: {e}")
-            return
-    else:
-        logger = DataLogger()
-        dates = logger.get_all_dates()
+    logger = DataLogger()
+    dates = logger.get_all_dates()
     
     if not dates:
         st.warning("⚠️ No data")
@@ -1370,10 +1247,7 @@ def daily_summary_page():
     
     selected_date = st.selectbox("📆 Date", dates, index=0)
     
-    if is_cloud():
-        df = all_df[all_df["Date"] == selected_date].drop(columns=["Date"])
-    else:
-        df = logger.load_date(selected_date)
+    df = logger.load_date(selected_date)
     
     if df is None or df.empty:
         st.error("❌ No data")
@@ -1393,16 +1267,8 @@ def daily_summary_page():
 def timeline_archive_page():
     st.title("📦 TIMELINE ARCHIVE")
     
-    if is_cloud():
-        try:
-            from gsheets_sync import load_timeline_dates_from_sheets, load_timeline_from_sheets
-            dates = load_timeline_dates_from_sheets()
-        except Exception as e:
-            st.error(f"Error: {e}")
-            return
-    else:
-        tracker = LiveTracker()
-        dates = tracker.get_archive_dates()
+    tracker = LiveTracker()
+    dates = tracker.get_archive_dates()
     
     if not dates:
         st.warning("⚠️ No archived timelines yet")
@@ -1411,10 +1277,7 @@ def timeline_archive_page():
     
     selected_date = st.selectbox("📆 Select Date", dates, index=0)
     
-    if is_cloud():
-        df = load_timeline_from_sheets(selected_date)
-    else:
-        df = tracker.load_archive(selected_date)
+    df = tracker.load_archive(selected_date)
     
     if df is None or df.empty:
         st.error("❌ No data for this date")
@@ -1472,11 +1335,7 @@ def portfolio_tracker_page():
             st.rerun()
     
     with st.spinner("Loading portfolio..."):
-        if is_cloud():
-            from gsheets_sync import load_portfolio_from_sheets
-            df = load_portfolio_from_sheets()
-        else:
-            df = portfolio.get_portfolio_with_current_prices()
+        df = portfolio.get_portfolio_with_current_prices()
     
     if df is None or df.empty:
         st.info("💡 Portfolio is empty. Stocks with score 60+ will be added automatically at 14:59")
