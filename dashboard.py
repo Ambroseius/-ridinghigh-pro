@@ -1285,7 +1285,9 @@ def main_page():
         
         with col3:
             if auto_scan and st.session_state.last_scan:
-                time_since = (datetime.now() - st.session_state.last_scan).total_seconds()
+                _ls2 = st.session_state.last_scan
+                if _ls2.tzinfo is None: _ls2 = PERU_TZ.localize(_ls2)
+                time_since = (datetime.now(PERU_TZ) - _ls2).total_seconds()
                 time_left = max(0, 60 - time_since)
                 st.metric("Next", f"{int(time_left)}s")
         
