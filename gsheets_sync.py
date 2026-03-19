@@ -272,3 +272,7 @@ def load_timeline_from_sheets(date: str):
 # Alias for compatibility
 def get_gsheets_client():
     return _get_client()
+
+# Alias for compatibility
+def get_or_create_sheet(spreadsheet, tab_name):
+    return _get_or_create_sheet(spreadsheet, tab_name)
