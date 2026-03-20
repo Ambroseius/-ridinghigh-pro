@@ -1371,7 +1371,7 @@ def daily_summary_page():
     )
 
 def timeline_archive_page():
-    st.title("📦 TIMELINE ARCHIVE")
+    st.markdown("## 📦 TIMELINE ARCHIVE")
     
     if is_cloud():
         try:
