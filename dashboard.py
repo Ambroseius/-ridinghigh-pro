@@ -1469,6 +1469,20 @@ def portfolio_tracker_page():
                     for col in ["Score","BuyPrice","CurrentPrice","Change%","P/L"]:
                         if col in df.columns:
                             df[col] = pd.to_numeric(df[col], errors="coerce")
+                    # Update current prices from Yahoo Finance
+                    import yfinance as yf
+                    for idx, row in df.iterrows():
+                        try:
+                            ticker = row["Ticker"]
+                            hist = yf.Ticker(ticker).history(period="1d")
+                            if not hist.empty:
+                                current = hist.iloc[-1]["Close"]
+                                buy = float(row["BuyPrice"])
+                                df.at[idx, "CurrentPrice"] = round(current, 2)
+                                df.at[idx, "Change%"] = round(((current - buy) / buy) * 100, 2)
+                                df.at[idx, "P/L"] = round(current - buy, 2)
+                        except:
+                            pass
             except:
                 df = None
         else:
