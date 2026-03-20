@@ -1509,9 +1509,9 @@ def portfolio_tracker_page():
             'Ticker': row['Ticker'],
             'Score': f"{row['Score']:.2f}",
             'Buy Price': f"${row['BuyPrice']:.2f}",
-            'Current': f"${row['CurrentPrice']:.2f}",
-            'Change%': f"{row['Change%']:+.2f}%",
-            'P/L': f"${row['P/L']:+.2f}",
+            'Current': f"${float(row.get('CurrentPrice', row.get('BuyPrice', 0))):.2f}",
+            'Change%': f"{float(row.get('Change%', 0)):+.2f}%",
+            'P/L': f"${float(row.get('P/L', 0)):+.2f}",
             'Status': row['Status'],
             'PositionKey': row['PositionKey']
         })
