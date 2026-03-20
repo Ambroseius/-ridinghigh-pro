@@ -1408,7 +1408,15 @@ def timeline_archive_page():
     
     selected_date = st.selectbox("📆 Select Date", dates, index=0)
     
-    df = tracker.load_archive(selected_date)
+    if is_cloud():
+        all_data = ws.get_all_values()
+        all_df = pd.DataFrame(all_data[1:], columns=all_data[0])
+        day_df = all_df[all_df["Date"] == selected_date].drop(columns=["Date"], errors="ignore")
+        day_df["Score"] = pd.to_numeric(day_df.get("Score", 0), errors="coerce")
+        df = day_df.pivot_table(index="Ticker", columns="ScanTime", values="Score", aggfunc="last")
+        df = df[sorted(df.columns, reverse=True)].round(2)
+    else:
+        df = tracker.load_archive(selected_date)
     
     if df is None or df.empty:
         st.error("❌ No data for this date")
