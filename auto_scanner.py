@@ -350,17 +350,14 @@ def run_scan():
         existing = ws_timeline.get_all_values()
         results_df = pd.DataFrame(results)
 
+        new_rows = results_df.copy()
+        new_rows.insert(0, 'ScanTime', scan_time)
+        new_rows.insert(0, 'Date', today)
         if len(existing) <= 1:
-            results_df.insert(0, 'ScanTime', scan_time)
-            results_df.insert(0, 'Date', today)
-            df_to_sheet(ws_timeline, results_df)
+            df_to_sheet(ws_timeline, new_rows)
         else:
-            ex_df = pd.DataFrame(existing[1:], columns=existing[0])
-            new_rows = results_df.copy()
-            new_rows.insert(0, 'ScanTime', scan_time)
-            new_rows.insert(0, 'Date', today)
-            combined = pd.concat([ex_df, new_rows], ignore_index=True)
-            df_to_sheet(ws_timeline, combined)
+            rows_to_add = new_rows.astype(str).values.tolist()
+            ws_timeline.append_rows(rows_to_add)
 
         # Daily snapshot at 14:59
         if is_snapshot_time():
