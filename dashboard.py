@@ -1476,7 +1476,7 @@ def timeline_archive_page():
     
     styled_df = df.style.applymap(color_score).format("{:.2f}")
     
-    table_height = min(800, len(df) * 40 + 50)
+    table_height = 600
     st.dataframe(styled_df, use_container_width=True, height=table_height)
     
     csv = df.to_csv()
