@@ -1495,7 +1495,7 @@ def portfolio_tracker_page():
         st.metric("Open", open_positions)
     
     with col3:
-        winners = len(df[df['Change%'] > 0])
+        winners = len(df[df['Change%'].astype(float) > 0])
         st.metric("Winners", winners)
     
     with col4:

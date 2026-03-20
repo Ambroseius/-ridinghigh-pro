@@ -376,6 +376,19 @@ def run_scan():
                 combined_snap = pd.concat([other, snap_df], ignore_index=True)
                 df_to_sheet(ws_snap, combined_snap)
             print("📸 Daily snapshot saved!")
+            # Save timeline archive at 14:59
+            ws_arch = get_or_create_sheet(sh, "timeline_archive")
+            arch_df = results_df.copy()
+            arch_df.insert(0, 'Date', today)
+            existing_arch = ws_arch.get_all_values()
+            if len(existing_arch) <= 1:
+                df_to_sheet(ws_arch, arch_df)
+            else:
+                ex_arch = pd.DataFrame(existing_arch[1:], columns=existing_arch[0])
+                other_arch = ex_arch[ex_arch['Date'] != today]
+                combined_arch = pd.concat([other_arch, arch_df], ignore_index=True)
+                df_to_sheet(ws_arch, combined_arch)
+            print("📦 Timeline archive saved!")
 
         print(f"✅ Saved {len(results)} stocks to Google Sheets at {scan_time}")
 
