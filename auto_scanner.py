@@ -411,6 +411,27 @@ def run_scan():
                 combined_snap = pd.concat([other, snap_df], ignore_index=True)
                 df_to_sheet(ws_snap, combined_snap)
             print("📸 Daily snapshot saved!")
+            # Save portfolio at 14:59
+            ws_port = get_or_create_sheet(sh, "portfolio")
+            high_score = results_df[results_df['Score'].astype(float) >= 60].copy()
+            if not high_score.empty:
+                existing_port = ws_port.get_all_values()
+                new_positions = []
+                existing_keys = set()
+                if len(existing_port) > 1:
+                    ex_port = pd.DataFrame(existing_port[1:], columns=existing_port[0])
+                    existing_keys = set(ex_port['PositionKey'].values) if 'PositionKey' in ex_port.columns else set()
+                else:
+                    ex_port = pd.DataFrame()
+                for _, row in high_score.iterrows():
+                    key = f"{row['Ticker']}_{today}"
+                    if key not in existing_keys:
+                        new_positions.append({'PositionKey': key, 'Date': today, 'Ticker': row['Ticker'], 'Score': round(float(row['Score']), 2), 'BuyPrice': round(float(row['Price']), 2), 'Status': 'Open'})
+                if new_positions:
+                    new_port_df = pd.DataFrame(new_positions)
+                    combined_port = pd.concat([ex_port, new_port_df], ignore_index=True) if not ex_port.empty else new_port_df
+                    df_to_sheet(ws_port, combined_port)
+                    print(f"💼 Portfolio saved! {len(new_positions)} new stocks")
             # Save timeline archive at 14:59
             ws_arch = get_or_create_sheet(sh, "timeline_archive")
             arch_df = results_df.copy()
