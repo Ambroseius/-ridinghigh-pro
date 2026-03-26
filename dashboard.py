@@ -1701,8 +1701,8 @@ def post_analysis_page():
     def color_change(val):
         try:
             v = float(val)
-            if v > 0:  return "color: #f1c40f"
-            if v < 0:  return "color: #f1c40f"
+            if v > 0:  return "color: #2ecc71"
+            if v < 0:  return "color: #e74c3c"
             return ""
         except:
             return ""
