@@ -1767,9 +1767,9 @@ def post_analysis_page():
         def color_diff(val):
             try:
                 v = float(val)
-                if v > 10:  return "color: #e74c3c"
-                if v < -10: return "color: #2ecc71"
-                return "color: #f1c40f"
+                if v < -10: return "color: #e74c3c"   # הפרש גדול = המערכת הטעתה
+                if v > 10:  return "color: #2ecc71"   # ציון דינמי גבוה = מניה חזקה
+                return "color: #f1c40f"                # קרוב לאפס = סיגנל אמין
             except:
                 return ""
 
