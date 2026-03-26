@@ -1,0 +1,30 @@
+name: Post Analysis Collector
+
+on:
+  schedule:
+    # Runs at 08:00 UTC = 03:00 Peru time (after market close previous day)
+    - cron: '0 8 * * 2-6'  # Tue-Sat (covers Mon-Fri trading days)
+  workflow_dispatch:  # Manual trigger
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install gspread google-auth pandas yfinance
+
+      - name: Create credentials file
+        run: |
+          echo '${{ secrets.GCP_SERVICE_ACCOUNT }}' > google_credentials.json
+
+      - name: Run Post Analysis Collector
+        run: |
+          python post_analysis_collector.py

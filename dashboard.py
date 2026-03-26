@@ -1623,7 +1623,7 @@ def portfolio_tracker_page():
 def main():
     page = st.sidebar.radio(
         "🧭 Navigation",
-        ["📊 Live Tracker", "💼 Portfolio Tracker", "📅 Daily Summary", "📦 Timeline Archive"]
+        ["📊 Live Tracker", "💼 Portfolio Tracker", "📅 Daily Summary", "📦 Timeline Archive", "🔬 Post Analysis"]
     )
     
     if page == "📊 Live Tracker":
@@ -1632,8 +1632,101 @@ def main():
         portfolio_tracker_page()
     elif page == "📅 Daily Summary":
         daily_summary_page()
-    else:
+    elif page == "📦 Timeline Archive":
         timeline_archive_page()
+    else:
+        post_analysis_page()
 
 if __name__ == "__main__":
     main()
+
+
+def post_analysis_page():
+    st.title("🔬 Post Analysis")
+    st.caption("מניות עם Score 60+ — מה קרה ב-5 ימים אחרי הסריקה")
+
+    from gsheets_sync import load_post_analysis_from_sheets
+
+    with st.spinner("טוען נתונים..."):
+        df = load_post_analysis_from_sheets()
+
+    if df.empty:
+        st.info("📭 אין נתונים עדיין — הקולקטור יתחיל לאסוף לאחר 5 ימי מסחר מהסריקה הראשונה")
+        return
+
+    # ── Summary KPIs ────────────────────────────────────────────────────────
+    total = len(df)
+    tp10  = int(df["TP10_Hit"].sum()) if "TP10_Hit" in df.columns else 0
+    tp15  = int(df["TP15_Hit"].sum()) if "TP15_Hit" in df.columns else 0
+    tp20  = int(df["TP20_Hit"].sum()) if "TP20_Hit" in df.columns else 0
+    avg_drop = df["MaxDrop%"].mean() if "MaxDrop%" in df.columns else 0
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("סה״כ מניות", total)
+    c2.metric("TP 10% Hit", f"{tp10}/{total}", f"{tp10/total*100:.0f}%" if total else "")
+    c3.metric("TP 15% Hit", f"{tp15}/{total}", f"{tp15/total*100:.0f}%" if total else "")
+    c4.metric("TP 20% Hit", f"{tp20}/{total}", f"{tp20/total*100:.0f}%" if total else "")
+    c5.metric("Avg Max Drop", f"{avg_drop:.1f}%")
+
+    st.divider()
+
+    # ── Filters ─────────────────────────────────────────────────────────────
+    col1, col2 = st.columns(2)
+    with col1:
+        score_filter = st.slider("Score מינימום", 60, 100, 60)
+    with col2:
+        show_only_hits = st.checkbox("הצג רק מניות שהגיעו ל-TP 10%")
+
+    filtered = df[df["Score"] >= score_filter].copy()
+    if show_only_hits and "TP10_Hit" in filtered.columns:
+        filtered = filtered[filtered["TP10_Hit"] == 1]
+
+    # ── Main Table ───────────────────────────────────────────────────────────
+    st.subheader(f"📋 תוצאות ({len(filtered)} מניות)")
+
+    display_cols = ["Ticker", "ScanDate", "Score", "ScanPrice", "ScanChange%",
+                    "MaxDrop%", "BestDay", "TP10_Hit", "TP15_Hit", "TP20_Hit"]
+    display_cols = [c for c in display_cols if c in filtered.columns]
+
+    def color_row(val):
+        if val == 1:
+            return "background-color: #1a4a1a; color: #00ff88"
+        elif val == 0:
+            return "background-color: #4a1a1a; color: #ff4444"
+        return ""
+
+    def color_drop(val):
+        try:
+            v = float(val)
+            if v <= -15: return "color: #00ff88; font-weight: bold"
+            if v <= -10: return "color: #88ff44"
+            if v <= -5:  return "color: #ffaa00"
+            return "color: #ff4444"
+        except:
+            return ""
+
+    styled = filtered[display_cols].style
+    for col in ["TP10_Hit", "TP15_Hit", "TP20_Hit"]:
+        if col in display_cols:
+            styled = styled.applymap(color_row, subset=[col])
+    if "MaxDrop%" in display_cols:
+        styled = styled.applymap(color_drop, subset=["MaxDrop%"])
+
+    st.dataframe(styled, use_container_width=True, height=500)
+
+    st.divider()
+
+    # ── BestDay Distribution ─────────────────────────────────────────────────
+    if "BestDay" in df.columns and not df["BestDay"].dropna().empty:
+        st.subheader("📅 באיזה יום הגיע ה-Low הכי נמוך?")
+        best_day_counts = df["BestDay"].value_counts().sort_index()
+        best_day_df = pd.DataFrame({
+            "יום": [f"D+{int(d)}" for d in best_day_counts.index],
+            "מניות": best_day_counts.values
+        })
+        st.bar_chart(best_day_df.set_index("יום"))
+
+    # ── Download ─────────────────────────────────────────────────────────────
+    st.divider()
+    csv = filtered.to_csv(index=False)
+    st.download_button("⬇️ הורד CSV", csv, "post_analysis.csv", "text/csv")
