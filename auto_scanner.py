@@ -33,7 +33,7 @@ def is_market_hours():
 
 def is_snapshot_time():
     now = get_peru_time()
-    return dt_time(14, 55) <= now.time() < dt_time(15, 0)
+    return dt_time(14, 55) <= now.time() < dt_time(15, 5)
 
 # ── Google Sheets client ─────────────────────────────────────────────────────
 def get_gsheets_client():
