@@ -1743,6 +1743,63 @@ def post_analysis_page():
         st.bar_chart(best_day_df.set_index("יום"))
 
     st.divider()
+
+    # ── 1. Score Tier Analysis ───────────────────────────────────────────────
+    st.subheader("🎯 Win Rate לפי Score Tier")
+    tiers = [(60,70,"60-70"), (70,80,"70-80"), (80,90,"80-90"), (90,101,"90+")]
+    tier_rows = []
+    for low, high, label in tiers:
+        t = df[(df["Score"] >= low) & (df["Score"] < high)]
+        if len(t) == 0:
+            continue
+        tp10 = int(t["TP10_Hit"].sum()) if "TP10_Hit" in t.columns else 0
+        tp15 = int(t["TP15_Hit"].sum()) if "TP15_Hit" in t.columns else 0
+        avg_drop = t["MaxDrop%"].mean() if "MaxDrop%" in t.columns else 0
+        tier_rows.append({
+            "Score Tier": label,
+            "מניות": len(t),
+            "TP10 Hit": f"{tp10}/{len(t)} ({tp10/len(t)*100:.0f}%)",
+            "TP15 Hit": f"{tp15}/{len(t)} ({tp15/len(t)*100:.0f}%)",
+            "Avg MaxDrop%": f"{avg_drop:.2f}%"
+        })
+    if tier_rows:
+        st.dataframe(pd.DataFrame(tier_rows), use_container_width=True, hide_index=True)
+
+    st.divider()
+
+    # ── 2. Metric Correlation ────────────────────────────────────────────────
+    st.subheader("📐 קורלציה בין מטריקות ל-MaxDrop%")
+    metric_cols = ["Score", "ScanChange%", "ScanPrice"]
+    available_metrics = [c for c in metric_cols if c in df.columns]
+    if available_metrics and "MaxDrop%" in df.columns:
+        corr_data = []
+        for col in available_metrics:
+            try:
+                corr = df[col].corr(df["MaxDrop%"])
+                corr_data.append({"מטריקה": col, "קורלציה עם MaxDrop%": round(corr, 3)})
+            except:
+                pass
+        if corr_data:
+            corr_df = pd.DataFrame(corr_data).sort_values("קורלציה עם MaxDrop%")
+            st.dataframe(corr_df, use_container_width=True, hide_index=True)
+            st.caption("ערך שלילי = ככל שהמטריקה גבוהה יותר, הירידה גדולה יותר ✅")
+
+    st.divider()
+
+    # ── 3. Catalyst Search ───────────────────────────────────────────────────
+    st.subheader("🔍 חיפוש Catalyst למניה")
+    ticker_list = df["Ticker"].unique().tolist() if "Ticker" in df.columns else []
+    selected_ticker = st.selectbox("בחר מניה לבדיקה", ticker_list)
+    if selected_ticker and st.button(f"🔍 חפש חדשות על {selected_ticker}"):
+        search_url = f"https://finviz.com/quote.ashx?t={selected_ticker}"
+        st.markdown(f"**FINVIZ:** [{selected_ticker}]({search_url})")
+        news_url = f"https://news.google.com/search?q={selected_ticker}+stock"
+        st.markdown(f"**Google News:** [חפש {selected_ticker}]({news_url})")
+        sec_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company={selected_ticker}&type=8-K&dateb=&owner=include&count=5"
+        st.markdown(f"**SEC 8-K filings:** [בדוק הגשות]({sec_url})")
+        st.info("💡 אם יש PR/merger/FDA ביום הסריקה — זה catalyst אמיתי, לא pump!")
+
+    st.divider()
     csv = filtered.to_csv(index=False)
     st.download_button("⬇️ הורד CSV", csv, "post_analysis.csv", "text/csv")
 
