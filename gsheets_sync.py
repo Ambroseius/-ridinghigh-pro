@@ -338,6 +338,9 @@ def load_post_analysis_from_sheets() -> pd.DataFrame:
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce")
 
+        # Round all numeric columns to 2 decimal places
+        num_cols = df.select_dtypes(include="number").columns
+        df[num_cols] = df[num_cols].round(2)
         return df
 
     except Exception as e:
