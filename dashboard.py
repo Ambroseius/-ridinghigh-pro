@@ -1745,7 +1745,8 @@ def post_analysis_page():
     st.divider()
 
     # ── 1. Score Tier Analysis ───────────────────────────────────────────────
-    st.subheader("🎯 Win Rate לפי Score Tier")
+    st.subheader("🎯 ניתוח לפי רמת ציון")
+    st.caption("האם ציון גבוה יותר = שיעור הצלחה גבוה יותר? כל שורה מראה קבוצת מניות לפי טווח ציון.")
     tiers = [(60,70,"60-70"), (70,80,"70-80"), (80,90,"80-90"), (90,101,"90+")]
     tier_rows = []
     for low, high, label in tiers:
@@ -1756,11 +1757,11 @@ def post_analysis_page():
         tp15 = int(t["TP15_Hit"].sum()) if "TP15_Hit" in t.columns else 0
         avg_drop = t["MaxDrop%"].mean() if "MaxDrop%" in t.columns else 0
         tier_rows.append({
-            "Score Tier": label,
+            "טווח ציון": label,
             "מניות": len(t),
-            "TP10 Hit": f"{tp10}/{len(t)} ({tp10/len(t)*100:.0f}%)",
-            "TP15 Hit": f"{tp15}/{len(t)} ({tp15/len(t)*100:.0f}%)",
-            "Avg MaxDrop%": f"{avg_drop:.2f}%"
+            "הגיע ל-10%": f"{tp10}/{len(t)} ({tp10/len(t)*100:.0f}%)",
+            "הגיע ל-15%": f"{tp15}/{len(t)} ({tp15/len(t)*100:.0f}%)",
+            "ירידה ממוצעת": f"{avg_drop:.2f}%"
         })
     if tier_rows:
         st.dataframe(pd.DataFrame(tier_rows), use_container_width=True, hide_index=True)
@@ -1768,7 +1769,8 @@ def post_analysis_page():
     st.divider()
 
     # ── 2. Metric Correlation ────────────────────────────────────────────────
-    st.subheader("📐 קורלציה בין מטריקות ל-MaxDrop%")
+    st.subheader("📐 אילו מדדים מנבאים ירידה גדולה יותר?")
+    st.caption("קורלציה חיובית = ככל שהמדד גבוה יותר, הירידה קטנה יותר. קורלציה שלילית = ככל שהמדד גבוה יותר, הירידה גדולה יותר.")
     metric_cols = ["Score", "ScanChange%", "ScanPrice"]
     available_metrics = [c for c in metric_cols if c in df.columns]
     if available_metrics and "MaxDrop%" in df.columns:
@@ -1776,18 +1778,19 @@ def post_analysis_page():
         for col in available_metrics:
             try:
                 corr = df[col].corr(df["MaxDrop%"])
-                corr_data.append({"מטריקה": col, "קורלציה עם MaxDrop%": round(corr, 3)})
+                corr_data.append({"מדד": col, "קורלציה עם הירידה": round(corr, 3)})
             except:
                 pass
         if corr_data:
-            corr_df = pd.DataFrame(corr_data).sort_values("קורלציה עם MaxDrop%")
+            corr_df = pd.DataFrame(corr_data).sort_values("קורלציה עם הירידה")
             st.dataframe(corr_df, use_container_width=True, hide_index=True)
-            st.caption("ערך שלילי = ככל שהמטריקה גבוהה יותר, הירידה גדולה יותר ✅")
+            st.caption("ערך שלילי = המדד מנבא ירידה. ערך חיובי = המדד לא מנבא ירידה.")
 
     st.divider()
 
     # ── 3. Catalyst Search ───────────────────────────────────────────────────
-    st.subheader("🔍 חיפוש Catalyst למניה")
+    st.subheader("🔍 בדיקת חדשות למניה")
+    st.caption("לפני שנכנסים לשורט — בדוק אם יש סיבה אמיתית לעלייה (מיזוג, FDA, הודעה). אם כן, זה לא פאמפ רגיל ועדיף לדלג.")
     ticker_list = df["Ticker"].unique().tolist() if "Ticker" in df.columns else []
     selected_ticker = st.selectbox("בחר מניה לבדיקה", ticker_list)
     if selected_ticker and st.button(f"🔍 חפש חדשות על {selected_ticker}"):
