@@ -159,12 +159,15 @@ def run():
             print(f"[Collector] Already done: {ticker} {scan_date}")
             continue
 
-        # Check if D+5 is available (all 5 days of data might not be ready)
+        # Fetch whatever days are available (don't wait for D+5)
         trading_days = get_trading_days_after(scan_date, DAYS_FORWARD)
-        last_day = datetime.strptime(trading_days[-1], "%Y-%m-%d")
-        if datetime.now() < last_day + timedelta(days=1):
-            print(f"[Collector] {ticker} — D+5 not yet complete, skipping")
+        today_dt = datetime.now()
+        available_days = [d for d in trading_days if datetime.strptime(d, "%Y-%m-%d") < today_dt]
+        if not available_days:
+            print(f"[Collector] {ticker} — no days available yet, skipping")
             continue
+        trading_days = available_days
+        print(f"[Collector] {ticker} — {len(trading_days)} days available")
 
         print(f"[Collector] Processing {ticker} (scan: {scan_date}, score: {score})")
         ohlc = fetch_ohlc_for_days(ticker, trading_days)
