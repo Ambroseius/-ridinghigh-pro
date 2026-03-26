@@ -1720,7 +1720,14 @@ def post_analysis_page():
         styled = styled.applymap(color_change, subset=["ScanChange%"])
     if "EntryChange%" in display_cols:
         styled = styled.applymap(color_change, subset=["EntryChange%"])
-    format_dict = {col: "{:.2f}" for col in filtered[display_cols].select_dtypes(include="number").columns if col not in ["TP10_Hit", "TP15_Hit", "TP20_Hit", "BestDay"]}
+    format_dict = {}
+    for col in filtered[display_cols].select_dtypes(include="number").columns:
+        if col in ["TP10_Hit", "TP15_Hit", "TP20_Hit", "BestDay"]:
+            continue
+        elif "%" in col:
+            format_dict[col] = "{:.2f}%"
+        else:
+            format_dict[col] = "{:.2f}"
     styled = styled.format(format_dict)
     st.dataframe(styled, use_container_width=True, height=500, hide_index=True)
 
