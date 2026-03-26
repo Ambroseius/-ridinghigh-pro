@@ -1752,6 +1752,8 @@ def post_analysis_page():
         df_dyn = df.copy()
         # Normalize MxV (more negative = better signal, cap at -5000)
         mxv_min, mxv_max = -5000, 0
+        df_dyn["MxV"] = pd.to_numeric(df_dyn["MxV"], errors="coerce").fillna(0)
+        df_dyn["ATRX"] = pd.to_numeric(df_dyn["ATRX"], errors="coerce").fillna(0)
         df_dyn["MxV_norm"] = ((df_dyn["MxV"].clip(mxv_min, mxv_max) - mxv_max) / (mxv_min - mxv_max) * 100).clip(0, 100)
         # Normalize ATRX (higher = better, cap at 50)
         atrx_min, atrx_max = 0, 50
