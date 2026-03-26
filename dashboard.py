@@ -1694,15 +1694,15 @@ def post_analysis_page():
             if v <= -15: return "color: #e74c3c; font-weight: bold"
             if v <= -10: return "color: #c0392b"
             if v <= -5:  return "color: #e67e22"
-            return "color: #2ecc71"
+            return "color: #f1c40f"
         except:
             return ""
 
     def color_change(val):
         try:
             v = float(val)
-            if v > 0:  return "color: #2ecc71"
-            if v < 0:  return "color: #2ecc71"
+            if v > 0:  return "color: #f1c40f"
+            if v < 0:  return "color: #f1c40f"
             return ""
         except:
             return ""
