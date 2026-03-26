@@ -1691,7 +1691,9 @@ def post_analysis_page():
             styled = styled.applymap(color_tp, subset=[col])
     if "MaxDrop%" in display_cols:
         styled = styled.applymap(color_drop, subset=["MaxDrop%"])
-    st.dataframe(styled, use_container_width=True, height=500)
+    format_dict = {col: "{:.2f}" for col in filtered[display_cols].select_dtypes(include="number").columns if col not in ["TP10_Hit", "TP15_Hit", "TP20_Hit", "BestDay"]}
+    styled = styled.format(format_dict)
+    st.dataframe(styled, use_container_width=True, height=500, hide_index=True)
 
     st.divider()
 
