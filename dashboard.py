@@ -1744,6 +1744,41 @@ def post_analysis_page():
 
     st.divider()
 
+    # ── Dynamic Score ────────────────────────────────────────────────────────
+    st.subheader("⚡ ציון דינמי — מבוסס נתונים אמיתיים")
+    st.caption("ציון חדש המבוסס רק על MxV ו-ATRX — שני המדדים שהוכחו כמנבאים ירידה. השווה אותו לציון המקורי.")
+
+    if "MxV" in df.columns and "ATRX" in df.columns:
+        df_dyn = df.copy()
+        # Normalize MxV (more negative = better signal, cap at -5000)
+        mxv_min, mxv_max = -5000, 0
+        df_dyn["MxV_norm"] = ((df_dyn["MxV"].clip(mxv_min, mxv_max) - mxv_max) / (mxv_min - mxv_max) * 100).clip(0, 100)
+        # Normalize ATRX (higher = better, cap at 50)
+        atrx_min, atrx_max = 0, 50
+        df_dyn["ATRX_norm"] = ((df_dyn["ATRX"].clip(atrx_min, atrx_max) - atrx_min) / (atrx_max - atrx_min) * 100).clip(0, 100)
+        # Dynamic score = 60% MxV + 40% ATRX
+        df_dyn["DynamicScore"] = (df_dyn["MxV_norm"] * 0.6 + df_dyn["ATRX_norm"] * 0.4).round(2)
+
+        dyn_display = df_dyn[["Ticker","ScanDate","Score","DynamicScore","MxV","ATRX","TP10_Hit","MaxDrop%"]].copy()
+        dyn_display["הפרש"] = (dyn_display["DynamicScore"] - dyn_display["Score"]).round(2)
+
+        def color_diff(val):
+            try:
+                v = float(val)
+                if v > 10:  return "color: #e74c3c"
+                if v < -10: return "color: #2ecc71"
+                return "color: #f1c40f"
+            except:
+                return ""
+
+        styled_dyn = dyn_display.style.applymap(color_diff, subset=["הפרש"])
+        st.dataframe(styled_dyn, use_container_width=True, hide_index=True)
+        st.caption("הפרש אדום = הציון המקורי גבוה מהדינמי (אולי מוערך יתר על המידה). ירוק = הציון הדינמי גבוה יותר.")
+    else:
+        st.info("אין מספיק נתונים לציון דינמי")
+
+    st.divider()
+
     # ── 1. Score Tier Analysis ───────────────────────────────────────────────
     st.subheader("🎯 ניתוח לפי רמת ציון")
     st.caption("האם ציון גבוה יותר = שיעור הצלחה גבוה יותר? כל שורה מראה קבוצת מניות לפי טווח ציון.")
