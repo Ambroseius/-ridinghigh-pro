@@ -149,9 +149,9 @@ def run():
         if not ticker or not scan_date:
             continue
 
-        # Skip if scan_date is today (D+1 data not available yet)
-        if scan_date >= today_str:
-            print(f"[Collector] Skipping {ticker} ({scan_date}) — too recent")
+        # Skip only future dates
+        if scan_date > today_str:
+            print(f"[Collector] Skipping {ticker} ({scan_date}) — future date")
             continue
 
         # Skip if already processed
