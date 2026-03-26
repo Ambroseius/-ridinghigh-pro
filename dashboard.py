@@ -1641,6 +1641,10 @@ if __name__ == "__main__":
     main()
 
 
+if __name__ == "__main__":
+    main()
+
+
 def post_analysis_page():
     st.title("🔬 Post Analysis")
     st.caption("מניות עם Score 60+ — מה קרה ב-5 ימים אחרי הסריקה")
