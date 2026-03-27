@@ -1830,18 +1830,92 @@ def post_analysis_page():
     st.divider()
 
     # ── 3. Catalyst Search ───────────────────────────────────────────────────
-    st.subheader("🔍 בדיקת חדשות למניה")
-    st.caption("לפני שנכנסים לשורט — בדוק אם יש סיבה אמיתית לעלייה (מיזוג, FDA, הודעה). אם כן, זה לא פאמפ רגיל ועדיף לדלג.")
+    st.subheader("🔍 ניתוח חדשות אוטומטי")
+    st.caption("Claude מחפש ומסווג אוטומטית את סוג האירוע שגרם לעלייה.")
+
     ticker_list = df["Ticker"].unique().tolist() if "Ticker" in df.columns else []
-    selected_ticker = st.selectbox("בחר מניה לבדיקה", ticker_list)
-    if selected_ticker and st.button(f"🔍 חפש חדשות על {selected_ticker}"):
-        search_url = f"https://finviz.com/quote.ashx?t={selected_ticker}"
-        st.markdown(f"**FINVIZ:** [{selected_ticker}]({search_url})")
-        news_url = f"https://news.google.com/search?q={selected_ticker}+stock"
-        st.markdown(f"**Google News:** [חפש {selected_ticker}]({news_url})")
-        sec_url = f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcompany&company={selected_ticker}&type=8-K&dateb=&owner=include&count=5"
-        st.markdown(f"**SEC 8-K filings:** [בדוק הגשות]({sec_url})")
-        st.info("💡 אם יש PR/merger/FDA ביום הסריקה — זה catalyst אמיתי, לא pump!")
+    col_t, col_d = st.columns(2)
+    with col_t:
+        selected_ticker = st.selectbox("בחר מניה", ticker_list, key="catalyst_ticker")
+    with col_d:
+        ticker_dates = df[df["Ticker"] == selected_ticker]["ScanDate"].tolist() if selected_ticker else []
+        selected_scan_date = st.selectbox("בחר תאריך סריקה", ticker_dates, key="catalyst_date")
+
+    if selected_ticker and selected_scan_date and st.button(f"🔍 נתח {selected_ticker}"):
+        with st.spinner(f"מנתח חדשות על {selected_ticker}..."):
+            try:
+                import anthropic, json
+                client = anthropic.Anthropic()
+
+                prompt = f"""You are a stock news analyst. Research the stock {selected_ticker} around {selected_scan_date}.
+Classify what caused the stock to surge on or around that date.
+Return ONLY valid JSON (no markdown, no explanation):
+{{
+  "summary": "one sentence in Hebrew explaining what happened",
+  "categories": {{
+    "merger_acquisition": true or false,
+    "fda_approval": true or false,
+    "clinical_trial": true or false,
+    "marketing_announcement": true or false,
+    "earnings_report": true or false,
+    "regulatory_compliance": true or false,
+    "lawsuit": true or false,
+    "share_dilution": true or false,
+    "reverse_split": true or false,
+    "forward_split": true or false,
+    "no_clear_reason": true or false
+  }}
+}}"""
+
+                response = client.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=1000,
+                    tools=[{{"type": "web_search_20250305", "name": "web_search"}}],
+                    messages=[{{"role": "user", "content": prompt}}]
+                )
+
+                result_text = ""
+                for block in response.content:
+                    if hasattr(block, "text"):
+                        result_text += block.text
+
+                clean = result_text.strip().replace("```json", "").replace("```", "").strip()
+                data = json.loads(clean)
+
+                st.info(f"📰 {data.get('summary', '')}")
+
+                category_labels = {
+                    "merger_acquisition":     "מיזוג / רכישה",
+                    "fda_approval":           "אישור FDA",
+                    "clinical_trial":         "מחקר קליני",
+                    "marketing_announcement": "הודעה שיווקית",
+                    "earnings_report":        "דוח רווחים",
+                    "regulatory_compliance":  "ציות רגולטורי",
+                    "lawsuit":                "תביעה משפטית",
+                    "share_dilution":         "דילול מניות",
+                    "reverse_split":          "ספליט הפוך",
+                    "forward_split":          "ספליט רגיל",
+                    "no_clear_reason":        "Pump ללא סיבה"
+                }
+
+                cats = data.get("categories", {})
+                rows = []
+                for key, label in category_labels.items():
+                    val = cats.get(key, False)
+                    rows.append({{"קטגוריה": label, selected_ticker: "✅" if val else "❌"}})
+
+                cat_df = pd.DataFrame(rows)
+
+                def color_cat(val):
+                    if val == "✅": return "color: #2ecc71; font-weight: bold"
+                    if val == "❌": return "color: #e74c3c"
+                    return ""
+
+                styled_cat = cat_df.style.applymap(color_cat, subset=[selected_ticker])
+                st.dataframe(styled_cat, use_container_width=True, hide_index=True)
+
+            except Exception as e:
+                st.error(f"שגיאה: {e}")
 
     st.divider()
     csv = filtered.to_csv(index=False)
