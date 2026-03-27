@@ -1830,23 +1830,44 @@ def post_analysis_page():
     st.divider()
 
     # ── 3. Catalyst Search ───────────────────────────────────────────────────
-    st.subheader("🔍 ניתוח חדשות אוטומטי")
-    st.caption("ניתוח אוטומטי של סוג האירוע שגרם לעלייה — לכל המניות בטבלה.")
+    st.subheader("🔍 ניתוח חדשות")
+    st.caption("סיווג אוטומטי של סוג האירוע שגרם לעלייה — מתעדכן אוטומטית בכל יום.")
 
-    category_labels = {
-        "merger_acquisition":     "מיזוג",
-        "fda_approval":           "FDA",
-        "clinical_trial":         "מחקר קליני",
-        "marketing_announcement": "הודעה שיווקית",
-        "earnings_report":        "דוח רווחים",
-        "regulatory_compliance":  "ציות רגולטורי",
-        "lawsuit":                "תביעה",
-        "share_dilution":         "דילול",
-        "reverse_split":          "ספליט הפוך",
-        "no_clear_reason":        "Pump"
+    cat_col_map = {
+        "cat_merger_acquisition":     "מיזוג",
+        "cat_fda_approval":           "FDA",
+        "cat_clinical_trial":         "מחקר קליני",
+        "cat_marketing_announcement": "הודעה שיווקית",
+        "cat_earnings_report":        "דוח רווחים",
+        "cat_regulatory_compliance":  "ציות רגולטורי",
+        "cat_lawsuit":                "תביעה",
+        "cat_share_dilution":         "דילול",
+        "cat_reverse_split":          "ספליט הפוך",
+        "cat_no_clear_reason":        "Pump"
     }
 
-    if st.button("🔍 נתח את כל המניות"):
+    available_cat_cols = [c for c in cat_col_map.keys() if c in df.columns]
+
+    if available_cat_cols:
+        cat_display = df[["Ticker","ScanDate"] + available_cat_cols].copy()
+        cat_display = cat_display.rename(columns=cat_col_map)
+        
+        label_cols = [cat_col_map[c] for c in available_cat_cols]
+        for col in label_cols:
+            cat_display[col] = cat_display[col].apply(
+                lambda x: "✅" if str(x) in ["1","1.0","True","true"] else ""
+            )
+
+        def color_check(val):
+            if val == "✅": return "color: #2ecc71; font-weight: bold"
+            return ""
+
+        styled_cat = cat_display.style.applymap(color_check, subset=label_cols)
+        st.dataframe(styled_cat, use_container_width=True, hide_index=True, height=400)
+    else:
+        st.info("⏳ נתוני catalyst יופיעו כאן לאחר הריצה הראשונה של הקולקטור")
+
+    if False and st.button("🔍 נתח את כל המניות"):
         import anthropic, json
         client = anthropic.Anthropic()
 

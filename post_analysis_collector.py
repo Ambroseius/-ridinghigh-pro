@@ -16,6 +16,80 @@ sys.path.insert(0, os.path.expanduser("~/RidingHighPro"))
 from gsheets_sync import load_post_analysis_from_sheets, save_post_analysis_to_sheets
 
 PERU_TZ = pytz.timezone("America/Lima")
+
+CATALYST_CATEGORIES = [
+    "merger_acquisition", "fda_approval", "clinical_trial",
+    "marketing_announcement", "earnings_report", "regulatory_compliance",
+    "lawsuit", "share_dilution", "reverse_split", "no_clear_reason"
+]
+
+def analyze_catalyst(ticker: str, scan_date: str) -> dict:
+    """Analyze catalyst using Google News RSS + keyword matching. Free, no API key needed."""
+    import urllib.request, urllib.parse, time
+    from datetime import datetime, timedelta
+
+    KEYWORDS = {
+        "merger_acquisition":     ["merger", "acquisition", "acquires", "acquired", "merge", "buyout", "takeover", "transaction", "deal"],
+        "fda_approval":           ["fda", "approved", "approval", "clearance", "nda", "bla", "510k", "designation", "drug", "indication"],
+        "clinical_trial":         ["trial", "study", "clinical", "phase", "patient", "data", "results", "efficacy", "safety", "ind"],
+        "marketing_announcement": ["launch", "partnership", "contract", "agreement", "collaboration", "license", "distribution", "commercial"],
+        "earnings_report":        ["earnings", "revenue", "quarter", "results", "profit", "loss", "guidance", "eps", "financial"],
+        "regulatory_compliance":  ["compliance", "nasdaq", "nyse", "listing", "delist", "notice", "requirement", "regain", "comply"],
+        "lawsuit":                ["lawsuit", "litigation", "class action", "sec investigation", "fraud", "complaint", "legal", "settle"],
+        "share_dilution":         ["offering", "dilution", "shares", "raise", "placement", "warrant", "atm", "equity", "capital raise"],
+        "reverse_split":          ["reverse split", "reverse stock split", "consolidation"],
+        "no_clear_reason":        []
+    }
+
+    # Fetch Google News RSS for ticker
+    headlines = []
+    for attempt in range(1, 4):
+        try:
+            query = urllib.parse.quote(f"{ticker} stock")
+            url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            response = urllib.request.urlopen(req, timeout=10)
+            content_rss = response.read().decode("utf-8").lower()
+
+            # Extract titles
+            import re
+            titles = re.findall(r"<title>(.*?)</title>", content_rss)
+            dates = re.findall(r"<pubdate>(.*?)</pubdate>", content_rss)
+
+            # Filter by date range (scan_date ± 3 days)
+            scan_dt = datetime.strptime(scan_date, "%Y-%m-%d")
+            date_range = [scan_dt - timedelta(days=2), scan_dt + timedelta(days=2)]
+
+            for i, title in enumerate(titles[1:], 0):  # skip feed title
+                headlines.append(title)
+
+            print(f"[Collector] Found {len(headlines)} headlines for {ticker}")
+            break
+
+        except Exception as e:
+            print(f"[Collector] News attempt {attempt}/3 failed for {ticker}: {e}")
+            time.sleep(2)
+
+    if not headlines:
+        result = {f"cat_{k}": 0 for k in CATALYST_CATEGORIES}
+        result["cat_no_clear_reason"] = 1
+        return result
+
+    # Match keywords
+    combined = " ".join(headlines)
+    cats = {}
+    any_found = False
+    for category, keywords in KEYWORDS.items():
+        if category == "no_clear_reason":
+            continue
+        found = any(kw in combined for kw in keywords)
+        cats[f"cat_{category}"] = 1 if found else 0
+        if found:
+            any_found = True
+
+    cats["cat_no_clear_reason"] = 0 if any_found else 1
+    print(f"[Collector] ✅ Catalyst analyzed for {ticker}: {[k for k,v in cats.items() if v==1]}")
+    return cats
 MIN_SCORE = 60
 DAYS_FORWARD = 5
 
@@ -190,6 +264,10 @@ def run():
         metric_fields = ["MxV","RunUp","RSI","ATRX","REL_VOL","Gap","VWAP","Float%","PriceToHigh","PriceTo52WHigh"]
         metrics = {f: round(pd.to_numeric(row.get(f, None), errors="coerce"), 2) for f in metric_fields}
 
+        # Analyze catalyst
+        print(f"[Collector] Analyzing catalyst for {ticker}...")
+        catalyst_data = analyze_catalyst(ticker, scan_date)
+
         new_row = {
             "Ticker":      ticker,
             "ScanDate":    scan_date,
@@ -197,6 +275,7 @@ def run():
             "ScanPrice":   round(float(scan_price), 2),
             "ScanChange%": round(pd.to_numeric(row.get("Change", 0), errors="coerce"), 2),
             **metrics,
+            **catalyst_data,
             **{k: round(v, 2) if isinstance(v, float) else v for k, v in ohlc.items()},
             **{k: round(v, 2) if isinstance(v, float) else v for k, v in stats.items()}
         }
