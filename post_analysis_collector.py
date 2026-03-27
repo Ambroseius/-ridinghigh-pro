@@ -24,59 +24,74 @@ CATALYST_CATEGORIES = [
 ]
 
 def analyze_catalyst(ticker: str, scan_date: str) -> dict:
-    """Analyze catalyst using Google News RSS + keyword matching. Free, no API key needed."""
-    import urllib.request, urllib.parse, time
+    """Analyze catalyst using Google News RSS + keyword matching. Filters by date and ticker mention."""
+    import urllib.request, urllib.parse, time, re
     from datetime import datetime, timedelta
+    from email.utils import parsedate_to_datetime
 
     KEYWORDS = {
-        "merger_acquisition":     ["merger", "acquisition", "acquires", "acquired", "merge", "buyout", "takeover", "transaction", "deal"],
-        "fda_approval":           ["fda", "approved", "approval", "clearance", "nda", "bla", "510k", "designation", "drug", "indication"],
-        "clinical_trial":         ["trial", "study", "clinical", "phase", "patient", "data", "results", "efficacy", "safety", "ind"],
-        "marketing_announcement": ["launch", "partnership", "contract", "agreement", "collaboration", "license", "distribution", "commercial"],
-        "earnings_report":        ["earnings", "revenue", "quarter", "results", "profit", "loss", "guidance", "eps", "financial"],
-        "regulatory_compliance":  ["compliance", "nasdaq", "nyse", "listing", "delist", "notice", "requirement", "regain", "comply"],
-        "lawsuit":                ["lawsuit", "litigation", "class action", "sec investigation", "fraud", "complaint", "legal", "settle"],
-        "share_dilution":         ["offering", "dilution", "shares", "raise", "placement", "warrant", "atm", "equity", "capital raise"],
-        "reverse_split":          ["reverse split", "reverse stock split", "consolidation"],
+        "merger_acquisition":     ["merger", "acquisition", "acquires", "acquired", "merges", "buyout", "takeover", "combines with", "to buy", "to acquire"],
+        "fda_approval":           ["fda approved", "fda approval", "fda clearance", "fda grants", "fda accepts", "orphan drug", "breakthrough designation", "nda approved", "bla approved"],
+        "clinical_trial":         ["phase 1", "phase 2", "phase 3", "clinical trial", "clinical study", "ind application", "topline data", "trial results", "patient enrollment"],
+        "marketing_announcement": ["partnership", "collaboration agreement", "license agreement", "commercialization", "distribution agreement", "strategic alliance"],
+        "earnings_report":        ["earnings report", "quarterly results", "q1 results", "q2 results", "q3 results", "q4 results", "annual results", "revenue report", "full year results"],
+        "regulatory_compliance":  ["nasdaq compliance", "nyse compliance", "regained compliance", "listing compliance", "deficiency notice", "reverse split", "bid price"],
+        "lawsuit":                ["class action", "sec charges", "sec investigation", "securities fraud", "lawsuit filed", "legal action", "complaint filed"],
+        "share_dilution":         ["public offering", "private placement", "at-the-market", "atm offering", "registered direct", "shares offered", "warrant exercise", "capital raise"],
+        "reverse_split":          ["reverse stock split", "reverse split", "1-for-", "share consolidation"],
         "no_clear_reason":        []
     }
 
-    # Fetch Google News RSS for ticker
-    headlines = []
+    scan_dt = datetime.strptime(scan_date, "%Y-%m-%d")
+    date_from = scan_dt - timedelta(days=2)
+    date_to   = scan_dt + timedelta(days=1)
+
+    # Fetch Google News RSS
+    relevant_headlines = []
     for attempt in range(1, 4):
         try:
-            query = urllib.parse.quote(f"{ticker} stock")
+            query = urllib.parse.quote(f'"{ticker}" stock')
             url = f"https://news.google.com/rss/search?q={query}&hl=en-US&gl=US&ceid=US:en"
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             response = urllib.request.urlopen(req, timeout=10)
-            content_rss = response.read().decode("utf-8").lower()
+            raw = response.read().decode("utf-8")
 
-            # Extract titles
-            import re
-            titles = re.findall(r"<title>(.*?)</title>", content_rss)
-            dates = re.findall(r"<pubdate>(.*?)</pubdate>", content_rss)
+            # Extract items with title + pubDate
+            items = re.findall(r"<item>(.*?)</item>", raw, re.DOTALL)
+            for item in items:
+                title_match = re.search(r"<title>(.*?)</title>", item)
+                date_match  = re.search(r"<pubDate>(.*?)</pubDate>", item)
+                if not title_match or not date_match:
+                    continue
 
-            # Filter by date range (scan_date ± 3 days)
-            scan_dt = datetime.strptime(scan_date, "%Y-%m-%d")
-            date_range = [scan_dt - timedelta(days=2), scan_dt + timedelta(days=2)]
+                title = title_match.group(1).lower()
+                # Check ticker appears in title
+                if ticker.lower() not in title:
+                    continue
 
-            for i, title in enumerate(titles[1:], 0):  # skip feed title
-                headlines.append(title)
+                # Check date range
+                try:
+                    pub_dt = parsedate_to_datetime(date_match.group(1)).replace(tzinfo=None)
+                    if not (date_from <= pub_dt <= date_to):
+                        continue
+                except:
+                    pass  # include if date parse fails
 
-            print(f"[Collector] Found {len(headlines)} headlines for {ticker}")
+                relevant_headlines.append(title)
+
+            print(f"[Collector] Found {len(relevant_headlines)} relevant headlines for {ticker} around {scan_date}")
             break
 
         except Exception as e:
             print(f"[Collector] News attempt {attempt}/3 failed for {ticker}: {e}")
             time.sleep(2)
 
-    if not headlines:
+    if not relevant_headlines:
         result = {f"cat_{k}": 0 for k in CATALYST_CATEGORIES}
         result["cat_no_clear_reason"] = 1
         return result
 
-    # Match keywords
-    combined = " ".join(headlines)
+    combined = " ".join(relevant_headlines)
     cats = {}
     any_found = False
     for category, keywords in KEYWORDS.items():
@@ -88,7 +103,7 @@ def analyze_catalyst(ticker: str, scan_date: str) -> dict:
             any_found = True
 
     cats["cat_no_clear_reason"] = 0 if any_found else 1
-    print(f"[Collector] ✅ Catalyst analyzed for {ticker}: {[k for k,v in cats.items() if v==1]}")
+    print(f"[Collector] ✅ {ticker}: {[k.replace('cat_','') for k,v in cats.items() if v==1]}")
     return cats
 MIN_SCORE = 60
 DAYS_FORWARD = 5
