@@ -46,7 +46,10 @@ def fetch_ohlc_for_days(ticker: str, trading_days: list) -> dict:
 
         # Flatten MultiIndex if needed
         if isinstance(hist.columns, pd.MultiIndex):
+            # For single ticker, get level 0 (Price type)
             hist.columns = hist.columns.get_level_values(0)
+        # Ensure columns are strings
+        hist.columns = [str(c) for c in hist.columns]
 
         hist.index = pd.to_datetime(hist.index).strftime("%Y-%m-%d")
         result = {}
