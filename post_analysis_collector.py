@@ -250,10 +250,24 @@ def run():
             print(f"[Collector] Skipping {ticker} ({scan_date}) — future date")
             continue
 
-        # Skip if already processed
+        # Skip if already processed AND has OHLC data
         if (ticker, scan_date) in already_done:
-            print(f"[Collector] Already done: {ticker} {scan_date}")
-            continue
+            # Check if OHLC is missing — if so, update
+            existing_row = existing_df[
+                (existing_df["Ticker"] == ticker) & 
+                (existing_df["ScanDate"] == scan_date)
+            ]
+            if not existing_row.empty:
+                max_drop = existing_row["MaxDrop%"].values[0]
+                if str(max_drop) not in ["", "nan", "None"] and max_drop == max_drop:
+                    print(f"[Collector] Already done: {ticker} {scan_date}")
+                    continue
+                else:
+                    print(f"[Collector] Updating missing OHLC: {ticker} {scan_date}")
+                    already_done.discard((ticker, scan_date))
+            else:
+                print(f"[Collector] Already done: {ticker} {scan_date}")
+                continue
 
         # Fetch whatever days are available (don't wait for D+5)
         trading_days = get_trading_days_after(scan_date, DAYS_FORWARD)
