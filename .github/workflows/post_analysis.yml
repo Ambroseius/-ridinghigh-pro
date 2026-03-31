@@ -28,3 +28,7 @@ jobs:
       - name: Run Post Analysis Collector
         run: |
           python post_analysis_collector.py
+
+      - name: Enrich with Intraday Data
+        run: |
+          python enrich_post_analysis.py
