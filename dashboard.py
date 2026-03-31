@@ -1697,6 +1697,7 @@ def post_analysis_page():
     st.subheader(f"📋 תוצאות ({len(filtered)} מניות)")
 
     display_cols = ["Ticker", "ScanDate", "Score", "ScanChange%", "ScanPrice",
+                    "IntraHigh", "IntraLow", "DayRunUp%", "PeakScoreTime", "PeakScorePrice",
                     "CurrentPrice", "EntryChange%", "MaxDrop%", "BestDay", "TP10_Hit", "TP15_Hit", "TP20_Hit"]
     display_cols = [c for c in display_cols if c in filtered.columns]
 
