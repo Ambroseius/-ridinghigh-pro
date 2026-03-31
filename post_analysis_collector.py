@@ -1,8 +1,10 @@
 """
-RidingHigh Pro - Post Analysis Collector
+RidingHigh Pro - Post Analysis Collector v2
 Runs every morning via GitHub Actions.
 For every stock with Score >= 60 from the daily_snapshots sheet,
 fetches D+1 to D+5 OHLC data and saves to post_analysis sheet.
+
+FIX v2: Now properly updates rows that have MaxDrop% but missing D5 data.
 """
 
 import pandas as pd
@@ -29,7 +31,7 @@ def fetch_finviz_news(ticker: str, scan_date: str) -> list:
     from datetime import datetime, timedelta
 
     scan_dt = datetime.strptime(scan_date, "%Y-%m-%d")
-    date_from = scan_dt - timedelta(days=30)  # Look back 30 days for context
+    date_from = scan_dt - timedelta(days=30)
     date_to   = scan_dt + timedelta(days=1)
 
     for attempt in range(1, 4):
@@ -67,7 +69,6 @@ def analyze_catalyst(ticker: str, scan_date: str) -> dict:
     """Analyze catalyst using FINVIZ news + keyword matching."""
     import urllib.request, urllib.parse, time, re
     from datetime import datetime, timedelta
-    from email.utils import parsedate_to_datetime
 
     KEYWORDS = {
         "merger_acquisition":     ["merger", "acquisition", "acquires", "acquired", "merges", "buyout", "takeover", "combines with", "to buy", "to acquire"],
@@ -82,7 +83,6 @@ def analyze_catalyst(ticker: str, scan_date: str) -> dict:
         "no_clear_reason":        []
     }
 
-    # Fetch from FINVIZ
     relevant_headlines = fetch_finviz_news(ticker, scan_date)
 
     if not relevant_headlines:
@@ -104,6 +104,8 @@ def analyze_catalyst(ticker: str, scan_date: str) -> dict:
     cats["cat_no_clear_reason"] = 0 if any_found else 1
     print(f"[Collector] ✅ {ticker}: {[k.replace('cat_','') for k,v in cats.items() if v==1]}")
     return cats
+
+
 MIN_SCORE = 60
 DAYS_FORWARD = 5
 
@@ -114,14 +116,31 @@ def get_trading_days_after(scan_date_str: str, n: int) -> list:
     days = []
     current = scan_date + timedelta(days=1)
     while len(days) < n:
-        if current.weekday() < 5:  # Mon-Fri
+        if current.weekday() < 5:
             days.append(current.strftime("%Y-%m-%d"))
         current += timedelta(days=1)
     return days
 
 
+def is_complete(existing_row: pd.Series, trading_days: list) -> bool:
+    """
+    Returns True only if ALL available trading days have Close data stored.
+    A row is NOT complete if any available day is missing its Close value.
+    """
+    today_dt = datetime.now()
+    for i, day in enumerate(trading_days, 1):
+        # Only check days that have already passed
+        if datetime.strptime(day, "%Y-%m-%d") >= today_dt:
+            break
+        col = f"D{i}_Close"
+        val = existing_row.get(col, None)
+        if val is None or str(val).strip() in ["", "nan", "None"]:
+            return False
+    return True
+
+
 def fetch_ohlc_for_days(ticker: str, trading_days: list) -> dict:
-    """Fetch OHLC for specific trading days using Yahoo Finance. Retries up to 5 times."""
+    """Fetch OHLC for specific trading days using Yahoo Finance."""
     import time
     max_retries = 5
     for attempt in range(1, max_retries + 1):
@@ -136,12 +155,11 @@ def fetch_ohlc_for_days(ticker: str, trading_days: list) -> dict:
                 time.sleep(2)
                 continue
 
-            # Flatten MultiIndex if needed
             if isinstance(hist.columns, pd.MultiIndex):
                 hist.columns = hist.columns.get_level_values(0)
             hist.columns = [str(c) for c in hist.columns]
-
             hist.index = pd.to_datetime(hist.index).strftime("%Y-%m-%d")
+
             result = {}
             for i, day in enumerate(trading_days, 1):
                 if day in hist.index:
@@ -166,7 +184,7 @@ def fetch_ohlc_for_days(ticker: str, trading_days: list) -> dict:
 
 
 def calculate_stats(scan_price: float, ohlc: dict) -> dict:
-    """Calculate MaxDrop%, BestDay, TP hits."""
+    """Calculate MaxDrop%, BestDay, TP hits from all available lows."""
     lows = []
     for i in range(1, 6):
         low = ohlc.get(f"D{i}_Low")
@@ -186,17 +204,16 @@ def calculate_stats(scan_price: float, ohlc: dict) -> dict:
 
     return {
         "MaxDrop%": max_drop,
-        "BestDay": best_day,
+        "BestDay":  best_day,
         "TP10_Hit": tp10,
         "TP15_Hit": tp15,
-        "TP20_Hit": tp20
+        "TP20_Hit": tp20,
     }
 
 
 def run():
-    print(f"[Collector] Starting post-analysis collection...")
+    print(f"[Collector] Starting post-analysis collection v2...")
 
-    # Load existing snapshots from Sheets
     from gsheets_sync import _get_client, SPREADSHEET_ID, TAB_DAILY_SNAPSHOT
     gc = _get_client()
     if gc is None:
@@ -219,7 +236,6 @@ def run():
     snapshots_df = pd.DataFrame(data[1:], columns=data[0])
     snapshots_df["Score"] = pd.to_numeric(snapshots_df.get("Score", 0), errors="coerce")
 
-    # Filter score >= 60
     candidates = snapshots_df[snapshots_df["Score"] >= MIN_SCORE].copy()
     print(f"[Collector] Found {len(candidates)} stocks with score >= {MIN_SCORE}")
 
@@ -227,67 +243,64 @@ def run():
         print("[Collector] Nothing to process")
         return
 
-    # Load already-processed rows to avoid re-fetching
     existing_df = load_post_analysis_from_sheets()
-    already_done = set()
-    if not existing_df.empty and "Ticker" in existing_df.columns and "ScanDate" in existing_df.columns:
-        already_done = set(zip(existing_df["Ticker"], existing_df["ScanDate"]))
 
     today_str = datetime.now(PERU_TZ).strftime("%Y-%m-%d")
     new_rows = []
 
     for _, row in candidates.iterrows():
-        ticker    = str(row.get("Ticker", "")).strip()
-        scan_date = str(row.get("Date", "")).strip()
-        score     = float(row.get("Score", 0))
+        ticker     = str(row.get("Ticker", "")).strip()
+        scan_date  = str(row.get("Date", "")).strip()
+        score      = float(row.get("Score", 0))
         scan_price = pd.to_numeric(row.get("Price", 0), errors="coerce") or 0
 
         if not ticker or not scan_date:
             continue
 
-        # Skip only future dates
         if scan_date > today_str:
             print(f"[Collector] Skipping {ticker} ({scan_date}) — future date")
             continue
 
-        # Skip if already processed AND has OHLC data
-        if (ticker, scan_date) in already_done:
-            # Check if OHLC is missing — if so, update
-            existing_row = existing_df[
-                (existing_df["Ticker"] == ticker) & 
+        # All 5 trading days for this stock
+        trading_days = get_trading_days_after(scan_date, DAYS_FORWARD)
+
+        # Check if already in existing_df
+        existing_match = pd.DataFrame()
+        if not existing_df.empty and "Ticker" in existing_df.columns:
+            existing_match = existing_df[
+                (existing_df["Ticker"] == ticker) &
                 (existing_df["ScanDate"] == scan_date)
             ]
-            if not existing_row.empty:
-                max_drop = existing_row["MaxDrop%"].values[0]
-                if str(max_drop) not in ["", "nan", "None"] and max_drop == max_drop:
-                    print(f"[Collector] Already done: {ticker} {scan_date}")
-                    continue
-                else:
-                    print(f"[Collector] Updating missing OHLC: {ticker} {scan_date}")
-                    already_done.discard((ticker, scan_date))
-            else:
-                print(f"[Collector] Already done: {ticker} {scan_date}")
-                continue
 
-        # Fetch whatever days are available (don't wait for D+5)
-        trading_days = get_trading_days_after(scan_date, DAYS_FORWARD)
+        if not existing_match.empty:
+            existing_row = existing_match.iloc[0]
+            if is_complete(existing_row, trading_days):
+                print(f"[Collector] Complete: {ticker} {scan_date} — skipping")
+                continue
+            else:
+                print(f"[Collector] Incomplete data for {ticker} {scan_date} — updating")
+
+        # Only fetch days that have already passed
         today_dt = datetime.now()
         available_days = [d for d in trading_days if datetime.strptime(d, "%Y-%m-%d") < today_dt]
-        trading_days = available_days  # Use whatever days are available (can be empty)
-        print(f"[Collector] {ticker} — {len(trading_days)} days available")
+        print(f"[Collector] {ticker} — {len(available_days)}/{DAYS_FORWARD} days available")
 
-        print(f"[Collector] Processing {ticker} (scan: {scan_date}, score: {score}, days: {len(trading_days)})")
-        ohlc = fetch_ohlc_for_days(ticker, trading_days) if trading_days else {}
-
+        ohlc  = fetch_ohlc_for_days(ticker, available_days) if available_days else {}
         stats = calculate_stats(scan_price, ohlc)
 
-        # Grab all metrics from snapshot
         metric_fields = ["MxV","RunUp","RSI","ATRX","REL_VOL","Gap","VWAP","Float%","PriceToHigh","PriceTo52WHigh"]
         metrics = {f: round(pd.to_numeric(row.get(f, None), errors="coerce"), 2) for f in metric_fields}
 
-        # Analyze catalyst
-        print(f"[Collector] Analyzing catalyst for {ticker}...")
-        catalyst_data = analyze_catalyst(ticker, scan_date)
+        # Only re-analyze catalyst if this is a new row
+        if existing_match.empty:
+            print(f"[Collector] Analyzing catalyst for {ticker}...")
+            catalyst_data = analyze_catalyst(ticker, scan_date)
+        else:
+            # Preserve existing catalyst data
+            catalyst_data = {}
+            for cat in CATALYST_CATEGORIES:
+                col = f"cat_{cat}"
+                catalyst_data[col] = existing_match.iloc[0].get(col, 0)
 
         new_row = {
             "Ticker":      ticker,
@@ -298,7 +311,7 @@ def run():
             **metrics,
             **catalyst_data,
             **{k: round(v, 2) if isinstance(v, float) else v for k, v in ohlc.items()},
-            **{k: round(v, 2) if isinstance(v, float) else v for k, v in stats.items()}
+            **{k: round(v, 2) if isinstance(v, float) else v for k, v in stats.items()},
         }
         new_rows.append(new_row)
 
@@ -308,7 +321,7 @@ def run():
 
     new_df = pd.DataFrame(new_rows)
     save_post_analysis_to_sheets(new_df)
-    print(f"[Collector] ✅ Saved {len(new_rows)} new rows to post_analysis")
+    print(f"[Collector] ✅ Saved/updated {len(new_rows)} rows in post_analysis")
 
 
 if __name__ == "__main__":
