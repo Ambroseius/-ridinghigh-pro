@@ -1658,12 +1658,29 @@ def post_analysis_page():
     tp20  = int(complete_df["TP20_Hit"].sum()) if "TP20_Hit" in complete_df.columns else 0
     avg_drop = complete_df["MaxDrop%"].mean() if "MaxDrop%" in complete_df.columns else 0
 
+    # Winners vs Losers analysis
+    winners = complete_df[complete_df["TP10_Hit"] == 1] if "TP10_Hit" in complete_df.columns else pd.DataFrame()
+    losers  = complete_df[complete_df["TP10_Hit"] == 0] if "TP10_Hit" in complete_df.columns else pd.DataFrame()
+    avg_win  = winners["MaxDrop%"].mean() if not winners.empty else 0
+    avg_loss = losers["MaxDrop%"].mean() if not losers.empty else 0
+    expected_value = (tp10/total * abs(avg_win) - (1 - tp10/total) * abs(avg_loss)) if total else 0
+
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("סה״כ מניות", total)
     c2.metric("TP 10% Hit", f"{tp10}/{total}", f"{tp10/total*100:.0f}%" if total else "")
     c3.metric("TP 15% Hit", f"{tp15}/{total}", f"{tp15/total*100:.0f}%" if total else "")
     c4.metric("TP 20% Hit", f"{tp20}/{total}", f"{tp20/total*100:.0f}%" if total else "")
     c5.metric("Avg Max Drop", f"{avg_drop:.1f}%")
+
+    st.divider()
+    st.subheader("📊 ניתוח רווח/הפסד")
+    w1, w2, w3, w4 = st.columns(4)
+    w1.metric("✅ מנצחות", f"{len(winners)}", f"הגיעו ל-10%+")
+    w2.metric("📈 רווח ממוצע", f"{abs(avg_win):.1f}%", "על המנצחות")
+    w3.metric("❌ מפסידות", f"{len(losers)}", f"לא הגיעו ל-10%")
+    w4.metric("📉 הפסד ממוצע", f"{abs(avg_loss):.1f}%", "על המפסידות")
+
+    st.info(f"💡 Expected Value: על כל עסקה אתה מצפה לרוויח **{expected_value:.1f}%** בממוצע — ({tp10/total*100:.0f}% × {abs(avg_win):.1f}% רווח) פחות ({(1-tp10/total)*100:.0f}% × {abs(avg_loss):.1f}% הפסד)" if total else "")
 
     st.divider()
 
