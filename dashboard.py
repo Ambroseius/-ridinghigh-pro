@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-RidingHigh Pro v14.1 - PORTFOLIO COLORS FIXED!
-- Portfolio Tracker: Only Change% and P/L columns are colored
-- All other columns remain white
-- Green for profit, Red for loss
+RidingHigh Pro v14.2 - EXCEL EXPORT FIXED
+- Timeline Archive exported as proper grid (pivot) per date
+- New "Analysis Export" with Timeline Summary for AI analysis
+- Full export unchanged except Timeline Archive fix
 """
 
 import streamlit as st
@@ -24,7 +24,7 @@ from gsheets_sync import save_snapshot_to_sheets, save_timeline_to_sheets, save_
 import json
 
 st.set_page_config(
-    page_title="RidingHigh Pro v14.1",
+    page_title="RidingHigh Pro v14.2",
     page_icon="🚀",
     layout="wide"
 )
@@ -874,7 +874,6 @@ class PortfolioTracker:
         self.portfolio_file = os.path.join(self.portfolio_dir, "portfolio.csv")
     
     def add_positions(self, results, date):
-        """Add stocks with score >= 60 to portfolio"""
         if not results:
             return 0
         
@@ -891,7 +890,6 @@ class PortfolioTracker:
         else:
             existing_df = pd.DataFrame()
         
-        # In cloud mode, also load from Sheets to preserve history
         if is_cloud():
             try:
                 from gsheets_sync import load_portfolio_from_sheets
@@ -927,7 +925,6 @@ class PortfolioTracker:
         return 0
     
     def get_portfolio_with_current_prices(self):
-        """Get portfolio with current prices"""
         if not os.path.exists(self.portfolio_file):
             return None
         
@@ -972,7 +969,6 @@ class PortfolioTracker:
             return None
     
     def close_position(self, position_key):
-        """Close a position"""
         if not os.path.exists(self.portfolio_file):
             return False
         
@@ -985,7 +981,6 @@ class PortfolioTracker:
             return False
     
     def delete_position(self, position_key):
-        """Delete a position"""
         if not os.path.exists(self.portfolio_file):
             return False
         
@@ -1079,11 +1074,76 @@ def check_snapshot_time():
     now = datetime.now(peru_tz)
     snapshot_time = dt_time(14, 59)
     current_time = now.time()
-    
     return snapshot_time <= current_time < dt_time(15, 0)
 
+
+def _build_timeline_summary(arch_df):
+    """
+    Given a timeline_archive DataFrame (long format with Date, Ticker, ScanTime, Score),
+    returns a summary DataFrame with one row per stock per day containing:
+    - PeakScore, PeakTime, ScoreAtOpen, ScoreAtClose
+    - MinutesToPeak, ScoreTrend, TimeAbove60
+    """
+    arch_df = arch_df.copy()
+    arch_df["Score"] = pd.to_numeric(arch_df["Score"], errors="coerce")
+    arch_df = arch_df.dropna(subset=["Score"])
+
+    rows = []
+    for (date, ticker), grp in arch_df.groupby(["Date", "Ticker"]):
+        grp = grp.sort_values("ScanTime")
+        scores = grp["Score"].values
+        times  = grp["ScanTime"].values
+
+        peak_idx   = scores.argmax()
+        peak_score = round(float(scores[peak_idx]), 2)
+        peak_time  = str(times[peak_idx])
+
+        score_open  = round(float(scores[0]),  2) if len(scores) > 0 else None
+        score_close = round(float(scores[-1]), 2) if len(scores) > 0 else None
+
+        # minutes from first scan to peak
+        try:
+            t0   = datetime.strptime(str(times[0]),      "%H:%M")
+            tpk  = datetime.strptime(peak_time,           "%H:%M")
+            mins_to_peak = int((tpk - t0).total_seconds() / 60)
+        except:
+            mins_to_peak = None
+
+        # trend: compare first third vs last third average
+        n = len(scores)
+        if n >= 6:
+            avg_start = scores[:n//3].mean()
+            avg_end   = scores[-(n//3):].mean()
+            diff = avg_end - avg_start
+            if diff > 2:
+                trend = "Rising"
+            elif diff < -2:
+                trend = "Falling"
+            else:
+                trend = "Stable"
+        else:
+            trend = "Stable"
+
+        time_above_60 = int((scores >= 60).sum())
+
+        rows.append({
+            "Date":         date,
+            "Ticker":       ticker,
+            "PeakScore":    peak_score,
+            "PeakTime":     peak_time,
+            "ScoreAtOpen":  score_open,
+            "ScoreAtClose": score_close,
+            "MinutesToPeak": mins_to_peak,
+            "ScoreTrend":   trend,
+            "TimeAbove60":  time_above_60,
+            "TotalScans":   n,
+        })
+
+    return pd.DataFrame(rows)
+
+
 def main_page():
-    st.title("🚀 RidingHigh Pro v14.1")
+    st.title("🚀 RidingHigh Pro v14.2")
     st.caption("Portfolio Tracker - Auto-saves stocks with score 60+ at 14:59")
     
     if 'dashboard' not in st.session_state:
@@ -1317,9 +1377,7 @@ def main_page():
         
         styled_timeline = df_timeline.style.applymap(color_score).format("{:.2f}")
         
-        timeline_height = 600
-        
-        st.dataframe(styled_timeline, use_container_width=True, height=timeline_height)
+        st.dataframe(styled_timeline, use_container_width=True, height=600)
         
         csv = df_timeline.to_csv()
         st.download_button(
@@ -1480,8 +1538,7 @@ def timeline_archive_page():
     
     styled_df = df.style.applymap(color_score).format("{:.2f}")
     
-    table_height = 600
-    st.dataframe(styled_df, use_container_width=True, height=table_height)
+    st.dataframe(styled_df, use_container_width=True, height=600)
     
     csv = df.to_csv()
     st.download_button(
@@ -1519,7 +1576,6 @@ def portfolio_tracker_page():
                     for col in ["Score","BuyPrice","CurrentPrice","Change%","P/L"]:
                         if col in df.columns:
                             df[col] = pd.to_numeric(df[col], errors="coerce")
-                    # Update current prices from Yahoo Finance
                     import yfinance as yf
                     for idx, row in df.iterrows():
                         try:
@@ -1583,26 +1639,17 @@ def portfolio_tracker_page():
     display_df = pd.DataFrame(display_data)
     
     def highlight_pl(row):
-        """צבע רק את עמודות Change% ו-P/L"""
         try:
             change_pct = float(row['Change%'].replace('%', '').replace('+', ''))
-            
-            # התחל עם רשימה ריקה (לבן)
             styles = [''] * len(row)
-            
-            # מצא את האינדקסים של Change% ו-P/L
             change_idx = list(row.index).index('Change%')
             pl_idx = list(row.index).index('P/L')
-            
             if change_pct > 0:
-                # ירוק
                 styles[change_idx] = 'background-color: #90EE90; color: black; font-weight: bold'
                 styles[pl_idx] = 'background-color: #90EE90; color: black; font-weight: bold'
             elif change_pct < 0:
-                # אדום
                 styles[change_idx] = 'background-color: #FFB6C1; color: black; font-weight: bold'
                 styles[pl_idx] = 'background-color: #FFB6C1; color: black; font-weight: bold'
-            
             return styles
         except:
             return [''] * len(row)
@@ -1630,7 +1677,6 @@ def post_analysis_page():
     with st.spinner("טוען נתונים..."):
         df = load_post_analysis_from_sheets()
 
-    # Fetch current prices
     if not df.empty and "Ticker" in df.columns:
         import yfinance as yf
         tickers = df["Ticker"].unique().tolist()
@@ -1650,7 +1696,6 @@ def post_analysis_page():
         st.info("📭 אין נתונים עדיין — הקולקטור יתחיל לאסוף לאחר 5 ימי מסחר מהסריקה הראשונה")
         return
 
-    # Only include rows with complete OHLC data
     complete_df = df[df["MaxDrop%"].notna() & (df["MaxDrop%"] != 0)] if "MaxDrop%" in df.columns else df
     total = len(complete_df)
     tp10  = int(complete_df["TP10_Hit"].sum()) if "TP10_Hit" in complete_df.columns else 0
@@ -1658,7 +1703,6 @@ def post_analysis_page():
     tp20  = int(complete_df["TP20_Hit"].sum()) if "TP20_Hit" in complete_df.columns else 0
     avg_drop = complete_df["MaxDrop%"].mean() if "MaxDrop%" in complete_df.columns else 0
 
-    # Winners vs Losers analysis
     winners = complete_df[complete_df["TP10_Hit"] == 1] if "TP10_Hit" in complete_df.columns else pd.DataFrame()
     losers  = complete_df[complete_df["TP10_Hit"] == 0] if "TP10_Hit" in complete_df.columns else pd.DataFrame()
     avg_win  = winners["MaxDrop%"].mean() if not winners.empty else 0
@@ -1727,7 +1771,6 @@ def post_analysis_page():
         except:
             return ""
 
-    # Round all numeric columns to 2 decimal places for display
     for col in filtered[display_cols].select_dtypes(include="number").columns:
         filtered[col] = filtered[col].round(2)
     styled = filtered[display_cols].style
@@ -1764,21 +1807,18 @@ def post_analysis_page():
 
     st.divider()
 
-    # ── Dynamic Score ────────────────────────────────────────────────────────
+    # ── Dynamic Score ──────────────────────────────────────────────────────
     st.subheader("⚡ ציון דינמי — מבוסס נתונים אמיתיים")
     st.caption("ציון חדש המבוסס רק על MxV ו-ATRX — שני המדדים שהוכחו כמנבאים ירידה. השווה אותו לציון המקורי.")
 
     if "MxV" in df.columns and "ATRX" in df.columns:
         df_dyn = df.copy()
-        # Normalize MxV (more negative = better signal, cap at -5000)
         mxv_min, mxv_max = -5000, 0
         df_dyn["MxV"] = pd.to_numeric(df_dyn["MxV"], errors="coerce").fillna(0)
         df_dyn["ATRX"] = pd.to_numeric(df_dyn["ATRX"], errors="coerce").fillna(0)
         df_dyn["MxV_norm"] = ((df_dyn["MxV"].clip(mxv_min, mxv_max) - mxv_max) / (mxv_min - mxv_max) * 100).clip(0, 100)
-        # Normalize ATRX (higher = better, cap at 50)
         atrx_min, atrx_max = 0, 50
         df_dyn["ATRX_norm"] = ((df_dyn["ATRX"].clip(atrx_min, atrx_max) - atrx_min) / (atrx_max - atrx_min) * 100).clip(0, 100)
-        # Dynamic score = 60% MxV + 40% ATRX
         df_dyn["DynamicScore"] = (df_dyn["MxV_norm"] * 0.6 + df_dyn["ATRX_norm"] * 0.4).round(2)
 
         dyn_display = df_dyn[["Ticker","ScanDate","Score","DynamicScore","MxV","ATRX","TP10_Hit","MaxDrop%"]].copy()
@@ -1787,13 +1827,12 @@ def post_analysis_page():
         def color_diff(val):
             try:
                 v = float(val)
-                if v < -10: return "color: #e74c3c"   # הפרש גדול = המערכת הטעתה
-                if v > 10:  return "color: #2ecc71"   # ציון דינמי גבוה = מניה חזקה
-                return "color: #f1c40f"                # קרוב לאפס = סיגנל אמין
+                if v < -10: return "color: #e74c3c"
+                if v > 10:  return "color: #2ecc71"
+                return "color: #f1c40f"
             except:
                 return ""
 
-        # Round all numeric cols to 2 decimals
         for col in dyn_display.select_dtypes(include="number").columns:
             dyn_display[col] = dyn_display[col].round(2)
         format_dyn = {col: "{:.2f}" for col in dyn_display.select_dtypes(include="number").columns}
@@ -1805,7 +1844,7 @@ def post_analysis_page():
 
     st.divider()
 
-    # ── 1. Score Tier Analysis ───────────────────────────────────────────────
+    # ── Score Tier Analysis ─────────────────────────────────────────────────
     st.subheader("🎯 ניתוח לפי רמת ציון")
     st.caption("האם ציון גבוה יותר = שיעור הצלחה גבוה יותר? כל שורה מראה קבוצת מניות לפי טווח ציון.")
     tiers = [(60,70,"60-70"), (70,80,"70-80"), (80,90,"80-90"), (90,101,"90+")]
@@ -1814,22 +1853,22 @@ def post_analysis_page():
         t = df[(df["Score"] >= low) & (df["Score"] < high)]
         if len(t) == 0:
             continue
-        tp10 = int(t["TP10_Hit"].sum()) if "TP10_Hit" in t.columns else 0
-        tp15 = int(t["TP15_Hit"].sum()) if "TP15_Hit" in t.columns else 0
-        avg_drop = t["MaxDrop%"].mean() if "MaxDrop%" in t.columns else 0
+        tp10_t = int(t["TP10_Hit"].sum()) if "TP10_Hit" in t.columns else 0
+        tp15_t = int(t["TP15_Hit"].sum()) if "TP15_Hit" in t.columns else 0
+        avg_drop_t = t["MaxDrop%"].mean() if "MaxDrop%" in t.columns else 0
         tier_rows.append({
             "טווח ציון": label,
             "מניות": len(t),
-            "הגיע ל-10%": f"{tp10}/{len(t)} ({tp10/len(t)*100:.0f}%)",
-            "הגיע ל-15%": f"{tp15}/{len(t)} ({tp15/len(t)*100:.0f}%)",
-            "ירידה ממוצעת": f"{avg_drop:.2f}%"
+            "הגיע ל-10%": f"{tp10_t}/{len(t)} ({tp10_t/len(t)*100:.0f}%)",
+            "הגיע ל-15%": f"{tp15_t}/{len(t)} ({tp15_t/len(t)*100:.0f}%)",
+            "ירידה ממוצעת": f"{avg_drop_t:.2f}%"
         })
     if tier_rows:
         st.dataframe(pd.DataFrame(tier_rows), use_container_width=True, hide_index=True)
 
     st.divider()
 
-    # ── 2. Metric Correlation ────────────────────────────────────────────────
+    # ── Metric Correlation ──────────────────────────────────────────────────
     st.subheader("📐 אילו מדדים מנבאים ירידה גדולה יותר?")
     st.caption("קורלציה חיובית = ככל שהמדד גבוה יותר, הירידה קטנה יותר. קורלציה שלילית = ככל שהמדד גבוה יותר, הירידה גדולה יותר.")
     metric_cols = ["Score", "ScanChange%", "MxV", "ATRX", "RSI", "RunUp", "REL_VOL", "Float%", "Gap"]
@@ -1849,7 +1888,7 @@ def post_analysis_page():
 
     st.divider()
 
-    # ── 3. Catalyst Search ───────────────────────────────────────────────────
+    # ── Catalyst ────────────────────────────────────────────────────────────
     st.subheader("🔍 ניתוח חדשות")
     st.caption("סיווג אוטומטי של סוג האירוע שגרם לעלייה — מתעדכן אוטומטית בכל יום.")
 
@@ -1871,121 +1910,159 @@ def post_analysis_page():
     if available_cat_cols:
         cat_display = df[["Ticker","ScanDate"] + available_cat_cols].copy()
         cat_display = cat_display.rename(columns=cat_col_map)
-        
         label_cols = [cat_col_map[c] for c in available_cat_cols]
         for col in label_cols:
             cat_display[col] = cat_display[col].apply(
                 lambda x: "✅" if str(x) in ["1","1.0","True","true"] else ""
             )
-
         def color_check(val):
             if val == "✅": return "color: #2ecc71; font-weight: bold"
             return ""
-
         styled_cat = cat_display.style.applymap(color_check, subset=label_cols)
         st.dataframe(styled_cat, use_container_width=True, hide_index=True, height=400)
     else:
         st.info("⏳ נתוני catalyst יופיעו כאן לאחר הריצה הראשונה של הקולקטור")
 
-    if False and st.button("🔍 נתח את כל המניות"):
-        import anthropic, json
-        client = anthropic.Anthropic()
-
-        cat_rows = []
-        unique_stocks = df[["Ticker","ScanDate"]].drop_duplicates().values.tolist()
-
-        progress = st.progress(0)
-        status = st.empty()
-
-        for i, (ticker, scan_date) in enumerate(unique_stocks):
-            status.text(f"מנתח {ticker} ({scan_date})...")
-            progress.progress((i+1) / len(unique_stocks))
-
-            try:
-                prompt = f"""Research stock {ticker} around {scan_date} to find what caused it to surge.
-Return ONLY valid JSON, no markdown:
-{{"categories": {{"merger_acquisition": true/false, "fda_approval": true/false, "clinical_trial": true/false, "marketing_announcement": true/false, "earnings_report": true/false, "regulatory_compliance": true/false, "lawsuit": true/false, "share_dilution": true/false, "reverse_split": true/false, "no_clear_reason": true/false}}}}"""
-
-                response = client.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=500,
-                    tools=[{{"type": "web_search_20250305", "name": "web_search"}}],
-                    messages=[{{"role": "user", "content": prompt}}]
-                )
-
-                result_text = "".join(b.text for b in response.content if hasattr(b, "text"))
-                clean = result_text.strip().replace("```json","").replace("```","").strip()
-                data = json.loads(clean)
-                cats = data.get("categories", {})
-
-            except Exception:
-                cats = {}
-
-            row = {{"Ticker": ticker, "ScanDate": scan_date}}
-            for key, label in category_labels.items():
-                row[label] = "✅" if cats.get(key, False) else ""
-            cat_rows.append(row)
-
-        progress.empty()
-        status.empty()
-
-        if cat_rows:
-            cat_df = pd.DataFrame(cat_rows)
-
-            def color_check(val):
-                if val == "✅": return "color: #2ecc71; font-weight: bold; font-size: 16px"
-                return ""
-
-            label_cols = list(category_labels.values())
-            styled_cat = cat_df.style.applymap(color_check, subset=label_cols)
-            st.dataframe(styled_cat, use_container_width=True, hide_index=True, height=500)
-
     st.divider()
     csv = filtered.to_csv(index=False)
     st.download_button("⬇️ הורד CSV", csv, "post_analysis.csv", "text/csv")
 
+    # ═══════════════════════════════════════════════════════════════════════
+    # EXPORT SECTION
+    # ═══════════════════════════════════════════════════════════════════════
     st.divider()
     st.subheader("📦 הורד את כל הנתונים")
-    st.caption("קובץ Excel אחד עם כל הטאבים — לניתוח מלא")
 
-    if st.button("📊 הכן קובץ Excel מלא"):
-        with st.spinner("טוען נתונים מכל הטאבים..."):
-            try:
-                import io
-                from gsheets_sync import _get_client, SPREADSHEET_ID
+    exp_col1, exp_col2 = st.columns(2)
 
-                gc = _get_client()
-                sh = gc.open_by_key(SPREADSHEET_ID)
+    # ── Export 1: Full Excel ────────────────────────────────────────────────
+    with exp_col1:
+        st.markdown("#### 📊 Export מלא")
+        st.caption("כל הטאבים — Timeline Archive כגריד דקות. לשמירה ולארכיון.")
 
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                    tabs = {
-                        "Post Analysis":    "post_analysis",
-                        "Daily Snapshots":  "daily_snapshots",
-                        "Portfolio":        "portfolio",
-                        "Timeline Archive": "timeline_archive",
-                    }
-                    for sheet_name, tab_name in tabs.items():
+        if st.button("📊 הכן קובץ Excel מלא"):
+            with st.spinner("טוען נתונים מכל הטאבים..."):
+                try:
+                    import io
+                    from gsheets_sync import _get_client, SPREADSHEET_ID
+
+                    gc = _get_client()
+                    sh = gc.open_by_key(SPREADSHEET_ID)
+
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+                        # Regular tabs
+                        regular_tabs = {
+                            "Post Analysis":  "post_analysis",
+                            "Daily Snapshots": "daily_snapshots",
+                            "Portfolio":       "portfolio",
+                        }
+                        for sheet_name, tab_name in regular_tabs.items():
+                            try:
+                                ws = sh.worksheet(tab_name)
+                                data = ws.get_all_values()
+                                tab_df = pd.DataFrame(data[1:], columns=data[0])
+                                tab_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                            except Exception as e:
+                                st.warning(f"⚠️ {tab_name}: {e}")
+
+                        # Timeline Archive — one pivot sheet per date
                         try:
-                            ws = sh.worksheet(tab_name)
-                            data = ws.get_all_values()
-                            tab_df = pd.DataFrame(data[1:], columns=data[0])
-                            tab_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                        except Exception as e:
-                            st.warning(f"⚠️ {tab_name}: {e}")
+                            ws_arch = sh.worksheet("timeline_archive")
+                            arch_data = ws_arch.get_all_values()
+                            arch_df = pd.DataFrame(arch_data[1:], columns=arch_data[0])
+                            arch_df["Score"] = pd.to_numeric(arch_df["Score"], errors="coerce")
+                            arch_dates = sorted(arch_df["Date"].unique().tolist(), reverse=True)
 
-                output.seek(0)
-                from datetime import datetime
-                filename = f"RidingHigh_Export_{datetime.now().strftime('%Y%m%d')}.xlsx"
-                st.download_button(
-                    "⬇️ הורד Excel מלא",
-                    output,
-                    filename,
-                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-                )
-                st.success("✅ הקובץ מוכן!")
-            except Exception as e:
-                st.error(f"שגיאה: {e}")
+                            for date_val in arch_dates:
+                                day_df = arch_df[arch_df["Date"] == date_val]
+                                pivot = day_df.pivot_table(
+                                    index="Ticker", columns="ScanTime", values="Score", aggfunc="last"
+                                )
+                                pivot = pivot[sorted(pivot.columns, reverse=True)].round(2)
+                                pivot.reset_index(inplace=True)
+                                sheet_label = f"Archive {date_val}"[:31]
+                                pivot.to_excel(writer, sheet_name=sheet_label, index=False)
+                        except Exception as e:
+                            st.warning(f"⚠️ timeline_archive: {e}")
+
+                    output.seek(0)
+                    filename = f"RidingHigh_Full_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                    st.download_button(
+                        "⬇️ הורד Excel מלא",
+                        output,
+                        filename,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    st.success("✅ הקובץ מוכן!")
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
+
+    # ── Export 2: Analysis Export (lightweight) ─────────────────────────────
+    with exp_col2:
+        st.markdown("#### 🔬 Export לניתוח AI")
+        st.caption("קובץ קל — Post Analysis + סיכום Timeline לכל מניה. מתאים להעלאה לצ'אט לניתוח.")
+
+        if st.button("🔬 הכן קובץ ניתוח"):
+            with st.spinner("בונה קובץ ניתוח..."):
+                try:
+                    import io
+                    from gsheets_sync import _get_client, SPREADSHEET_ID
+
+                    gc = _get_client()
+                    sh = gc.open_by_key(SPREADSHEET_ID)
+
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine="openpyxl") as writer:
+
+                        # Tab 1: Post Analysis (full)
+                        try:
+                            ws_pa = sh.worksheet("post_analysis")
+                            pa_data = ws_pa.get_all_values()
+                            pa_df = pd.DataFrame(pa_data[1:], columns=pa_data[0])
+                            pa_df.to_excel(writer, sheet_name="Post Analysis", index=False)
+                        except Exception as e:
+                            st.warning(f"⚠️ post_analysis: {e}")
+
+                        # Tab 2: Timeline Summary (computed from archive)
+                        try:
+                            ws_arch = sh.worksheet("timeline_archive")
+                            arch_data = ws_arch.get_all_values()
+                            arch_df = pd.DataFrame(arch_data[1:], columns=arch_data[0])
+
+                            if not arch_df.empty and "ScanTime" in arch_df.columns:
+                                summary_df = _build_timeline_summary(arch_df)
+                                summary_df.to_excel(writer, sheet_name="Timeline Summary", index=False)
+                            else:
+                                st.warning("⚠️ Timeline archive ריק או חסר עמודת ScanTime")
+                        except Exception as e:
+                            st.warning(f"⚠️ timeline summary: {e}")
+
+                        # Tab 3: Daily Snapshots (last 10 days only to keep light)
+                        try:
+                            ws_snap = sh.worksheet("daily_snapshots")
+                            snap_data = ws_snap.get_all_values()
+                            snap_df = pd.DataFrame(snap_data[1:], columns=snap_data[0])
+                            if "Date" in snap_df.columns:
+                                last_10_dates = sorted(snap_df["Date"].unique().tolist(), reverse=True)[:10]
+                                snap_df = snap_df[snap_df["Date"].isin(last_10_dates)]
+                            snap_df.to_excel(writer, sheet_name="Daily Snapshots (10d)", index=False)
+                        except Exception as e:
+                            st.warning(f"⚠️ daily_snapshots: {e}")
+
+                    output.seek(0)
+                    filename = f"RidingHigh_Analysis_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                    st.download_button(
+                        "⬇️ הורד קובץ ניתוח",
+                        output,
+                        filename,
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                    )
+                    st.success("✅ הקובץ מוכן! העלה אותו לצ'אט עם Claude לניתוח מעמיק 🤖")
+                except Exception as e:
+                    st.error(f"שגיאה: {e}")
+
 
 def main():
     page = st.sidebar.radio(
