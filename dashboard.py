@@ -1944,6 +1944,49 @@ Return ONLY valid JSON, no markdown:
     csv = filtered.to_csv(index=False)
     st.download_button("⬇️ הורד CSV", csv, "post_analysis.csv", "text/csv")
 
+    st.divider()
+    st.subheader("📦 הורד את כל הנתונים")
+    st.caption("קובץ Excel אחד עם כל הטאבים — לניתוח מלא")
+
+    if st.button("📊 הכן קובץ Excel מלא"):
+        with st.spinner("טוען נתונים מכל הטאבים..."):
+            try:
+                import io
+                from gsheets_sync import _get_client, SPREADSHEET_ID
+
+                gc = _get_client()
+                sh = gc.open_by_key(SPREADSHEET_ID)
+
+                output = io.BytesIO()
+                with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    tabs = {
+                        "Post Analysis":    "post_analysis",
+                        "Daily Snapshots":  "daily_snapshots",
+                        "Portfolio":        "portfolio",
+                        "Timeline Archive": "timeline_archive",
+                    }
+                    for sheet_name, tab_name in tabs.items():
+                        try:
+                            ws = sh.worksheet(tab_name)
+                            data = ws.get_all_values()
+                            tab_df = pd.DataFrame(data[1:], columns=data[0])
+                            tab_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                        except Exception as e:
+                            st.warning(f"⚠️ {tab_name}: {e}")
+
+                output.seek(0)
+                from datetime import datetime
+                filename = f"RidingHigh_Export_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                st.download_button(
+                    "⬇️ הורד Excel מלא",
+                    output,
+                    filename,
+                    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                )
+                st.success("✅ הקובץ מוכן!")
+            except Exception as e:
+                st.error(f"שגיאה: {e}")
+
 def main():
     page = st.sidebar.radio(
         "🧭 Navigation",
