@@ -1842,7 +1842,7 @@ def post_analysis_page():
                 return ""
 
         day_cols = [c for c in tracker_df.columns if c.startswith("D+")]
-        styled_tracker = tracker_df.style.applymap(color_day_cell, subset=day_cols)
+        styled_tracker = tracker_df.style.applymap(color_day_cell, subset=day_cols).format({"Score": "{:.2f}"})
         st.dataframe(styled_tracker, use_container_width=True, height=600, hide_index=True)
     else:
         st.info("⏳ אין עדיין נתוני D+1 עד D+5")
