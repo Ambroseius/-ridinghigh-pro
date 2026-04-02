@@ -175,7 +175,7 @@ def save_portfolio_to_sheets(df: pd.DataFrame) -> bool:
         return False
 
 
-def load_portfolio_from_sheets():
+def load_portfolio_from_sheets() -> pd.DataFrame | None:
     """
     Load portfolio from Google Sheets (used on cloud where local file doesn't exist).
     """
@@ -232,7 +232,7 @@ def load_timeline_dates_from_sheets() -> list:
         return []
 
 
-def load_timeline_from_sheets(date: str):
+def load_timeline_from_sheets(date: str) -> pd.DataFrame | None:
     """Load a specific date's timeline from Google Sheets."""
     try:
         gc = _get_client()
@@ -268,81 +268,3 @@ def load_timeline_from_sheets(date: str):
     except Exception as e:
         print(f"[GSheets] load timeline error: {e}")
         return None
-
-# Alias for compatibility
-def get_gsheets_client():
-    return _get_client()
-
-# Alias for compatibility
-def get_or_create_sheet(spreadsheet, tab_name):
-    return _get_or_create_sheet(spreadsheet, tab_name)
-
-# ── Post Analysis ────────────────────────────────────────────────────────────
-
-TAB_POST_ANALYSIS = "post_analysis"
-
-def save_post_analysis_to_sheets(df: pd.DataFrame) -> bool:
-    """Save post-analysis results to Google Sheets."""
-    try:
-        gc = _get_client()
-        if gc is None:
-            return False
-
-        sh = gc.open_by_key(SPREADSHEET_ID)
-        ws = _get_or_create_sheet(sh, TAB_POST_ANALYSIS)
-
-        existing = ws.get_all_values()
-        if len(existing) <= 1:
-            _df_to_sheet(ws, df)
-        else:
-            existing_df = pd.DataFrame(existing[1:], columns=existing[0])
-            # Update rows that already exist (same Ticker+ScanDate), append new ones
-            key = ["Ticker", "ScanDate"]
-            if all(k in existing_df.columns for k in key) and all(k in df.columns for k in key):
-                existing_df = existing_df[~existing_df.set_index(key).index.isin(df.set_index(key).index)]
-            combined = pd.concat([existing_df, df], ignore_index=True)
-            _df_to_sheet(ws, combined)
-
-        print("[GSheets] ✅ Post analysis saved")
-        return True
-
-    except Exception as e:
-        print(f"[GSheets] post analysis save error: {e}")
-        return False
-
-
-def load_post_analysis_from_sheets() -> pd.DataFrame:
-    """Load post-analysis data from Google Sheets."""
-    try:
-        gc = _get_client()
-        if gc is None:
-            return pd.DataFrame()
-
-        sh = gc.open_by_key(SPREADSHEET_ID)
-        ws = _get_or_create_sheet(sh, TAB_POST_ANALYSIS)
-        data = ws.get_all_values()
-
-        if len(data) <= 1:
-            return pd.DataFrame()
-
-        df = pd.DataFrame(data[1:], columns=data[0])
-
-        numeric_cols = ["Score", "ScanPrice", "ScanChange%",
-                        "D1_Open","D1_High","D1_Low","D1_Close",
-                        "D2_Open","D2_High","D2_Low","D2_Close",
-                        "D3_Open","D3_High","D3_Low","D3_Close",
-                        "D4_Open","D4_High","D4_Low","D4_Close",
-                        "D5_Open","D5_High","D5_Low","D5_Close",
-                        "MaxDrop%","BestDay","TP10_Hit","TP15_Hit","TP20_Hit"]
-        for col in numeric_cols:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-
-        # Round all numeric columns to 2 decimal places
-        num_cols = df.select_dtypes(include="number").columns
-        df[num_cols] = df[num_cols].round(2)
-        return df
-
-    except Exception as e:
-        print(f"[GSheets] post analysis load error: {e}")
-        return pd.DataFrame()
