@@ -1,5 +1,5 @@
 """
-RidingHigh Pro - Post Analysis Collector v2
+RidingHigh Pro - Post Analysis Collector v3
 Runs every morning via GitHub Actions.
 For every stock with Score >= 60 from the daily_snapshots sheet,
 fetches D+1 to D+5 OHLC data and saves to post_analysis sheet.
@@ -202,12 +202,17 @@ def calculate_stats(scan_price: float, ohlc: dict) -> dict:
     tp15 = 1 if min_low <= scan_price * 0.85 else 0
     tp20 = 1 if min_low <= scan_price * 0.80 else 0
 
+    # D1_Gap%: how much D1 opened vs ScanPrice (positive = gapped up = bad for short)
+    d1_open = ohlc.get("D1_Open")
+    d1_gap = round((d1_open - scan_price) / scan_price * 100, 2) if d1_open and scan_price > 0 else None
+
     return {
         "MaxDrop%": max_drop,
         "BestDay":  best_day,
         "TP10_Hit": tp10,
         "TP15_Hit": tp15,
         "TP20_Hit": tp20,
+        "D1_Gap%":  d1_gap,
     }
 
 
