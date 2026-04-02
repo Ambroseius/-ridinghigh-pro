@@ -1019,6 +1019,40 @@ def _get_gc():
     return None
 
 SHEET_ID = "1oyefUPV52SMeAlC4UejECYoPRNRudJJS42rukNGYx5k"
+
+def _download_spreadsheet_as_xlsx(file_id: str):
+    import io
+    try:
+        from google.oauth2.service_account import Credentials
+        from googleapiclient.discovery import build
+        from googleapiclient.http import MediaIoBaseDownload
+        scopes = ["https://www.googleapis.com/auth/drive.readonly"]
+        creds = None
+        try:
+            import streamlit as st
+            if "gcp_service_account" in st.secrets:
+                creds = Credentials.from_service_account_info(dict(st.secrets["gcp_service_account"]), scopes=scopes)
+        except Exception:
+            pass
+        if creds is None:
+            import os
+            path = os.path.expanduser("~/RidingHighPro/google_credentials.json")
+            if os.path.exists(path):
+                creds = Credentials.from_service_account_file(path, scopes=scopes)
+        if creds is None:
+            return None
+        service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        request = service.files().export_media(fileId=file_id, mimeType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+        buf = io.BytesIO()
+        downloader = MediaIoBaseDownload(buf, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buf.seek(0)
+        return pd.ExcelFile(buf)
+    except Exception as e:
+        return None
+
 PERU_TZ = pytz.timezone("America/Lima")
 
 def load_latest_from_sheets():
@@ -1994,11 +2028,11 @@ def post_analysis_page():
         st.caption("כל הטאבים — Timeline Archive כגריד דקות. לשמירה ולארכיון.")
 
         if st.button("📊 הכן קובץ Excel מלא"):
-            with st.spinner("טוען נתונים מכל הטאבים..."):
+            with st.spinner("מוריד נתונים מ-Google Drive..."):
                 try:
                     import io
+                    import io
                     from gsheets_sync import _get_client, SPREADSHEET_ID
-
                     gc = _get_client()
                     sh = gc.open_by_key(SPREADSHEET_ID)
 
@@ -2020,23 +2054,38 @@ def post_analysis_page():
                             except Exception as e:
                                 st.warning(f"⚠️ {tab_name}: {e}")
 
-                        # Timeline Archive — one pivot sheet per date
+                        # Timeline Archive — batched read from timeline_live
                         try:
-                            ws_arch = sh.worksheet("timeline_archive")
-                            arch_data = ws_arch.get_all_values()
-                            arch_df = pd.DataFrame(arch_data[1:], columns=arch_data[0])
+                            ws_live = sh.worksheet("timeline_live")
+                            headers_live = ws_live.row_values(1)
+                            total_rows_live = len(ws_live.col_values(1))
+                            col_range = chr(64 + len(headers_live))
+                            BATCH_SIZE = 5000
+                            all_rows_live = []
+                            row_start = 2
+                            while row_start <= total_rows_live:
+                                row_end = min(row_start + BATCH_SIZE - 1, total_rows_live)
+                                batch = ws_live.get(f"A{row_start}:{col_range}{row_end}")
+                                if not batch:
+                                    break
+                                all_rows_live.extend(batch)
+                                row_start += BATCH_SIZE
+                            arch_df = pd.DataFrame(all_rows_live, columns=headers_live)
                             arch_df["Score"] = pd.to_numeric(arch_df["Score"], errors="coerce")
-                            arch_dates = sorted(arch_df["Date"].unique().tolist(), reverse=True)
-
+                            arch_dates = sorted(arch_df["Date"].dropna().unique().tolist(), reverse=True)
+                            st.info(f"📅 נמצאו {len(arch_dates)} תאריכים: {', '.join(str(d) for d in arch_dates)}")
                             for date_val in arch_dates:
                                 day_df = arch_df[arch_df["Date"] == date_val]
-                                pivot = day_df.pivot_table(
-                                    index="Ticker", columns="ScanTime", values="Score", aggfunc="last"
-                                )
+                                if day_df.empty:
+                                    continue
+                                pivot = day_df.pivot_table(index="Ticker", columns="ScanTime", values="Score", aggfunc="last")
                                 pivot = pivot[sorted(pivot.columns, reverse=True)].round(2)
                                 pivot.reset_index(inplace=True)
                                 sheet_label = f"Archive {date_val}"[:31]
                                 pivot.to_excel(writer, sheet_name=sheet_label, index=False)
+                            st.info(f"✅ {len(arch_dates)} archive sheets נבנו")
+                        except Exception as e:
+                            st.warning(f"⚠️ timeline_archive: {e}")
                         except Exception as e:
                             st.warning(f"⚠️ timeline_archive: {e}")
 
@@ -2058,11 +2107,11 @@ def post_analysis_page():
         st.caption("קובץ קל — Post Analysis + סיכום Timeline לכל מניה. מתאים להעלאה לצ'אט לניתוח.")
 
         if st.button("🔬 הכן קובץ ניתוח"):
-            with st.spinner("בונה קובץ ניתוח..."):
+            with st.spinner("מוריד נתונים מ-Google Drive..."):
                 try:
                     import io
+                    import io
                     from gsheets_sync import _get_client, SPREADSHEET_ID
-
                     gc = _get_client()
                     sh = gc.open_by_key(SPREADSHEET_ID)
 
@@ -2078,27 +2127,38 @@ def post_analysis_page():
                         except Exception as e:
                             st.warning(f"⚠️ post_analysis: {e}")
 
-                        # Tab 2: Timeline Summary (computed from archive)
+                        # Tab 2: Timeline Summary — batched read from timeline_live (full history)
                         try:
-                            ws_arch = sh.worksheet("timeline_archive")
-                            arch_data = ws_arch.get_all_values()
-                            arch_df = pd.DataFrame(arch_data[1:], columns=arch_data[0])
-
+                            ws_live = sh.worksheet("timeline_live")
+                            headers_live = ws_live.row_values(1)
+                            total_rows_live = len(ws_live.col_values(1))
+                            col_range = chr(64 + len(headers_live))
+                            BATCH_SIZE = 5000
+                            all_rows_live = []
+                            row_start = 2
+                            while row_start <= total_rows_live:
+                                row_end = min(row_start + BATCH_SIZE - 1, total_rows_live)
+                                batch = ws_live.get(f"A{row_start}:{col_range}{row_end}")
+                                if not batch:
+                                    break
+                                all_rows_live.extend(batch)
+                                row_start += BATCH_SIZE
+                            arch_df = pd.DataFrame(all_rows_live, columns=headers_live)
                             if not arch_df.empty and "ScanTime" in arch_df.columns:
                                 summary_df = _build_timeline_summary(arch_df)
                                 summary_df.to_excel(writer, sheet_name="Timeline Summary", index=False)
+                                unique_dates = sorted(arch_df["Date"].dropna().unique().tolist())
+                                st.info(f"📅 Timeline Summary: {len(summary_df)} שורות מ-{len(unique_dates)} ימים")
                             else:
-                                st.warning("⚠️ Timeline archive ריק או חסר עמודת ScanTime")
+                                st.warning("⚠️ timeline_live ריק או חסר עמודת ScanTime")
                         except Exception as e:
                             st.warning(f"⚠️ timeline summary: {e}")
 
                         # Tab 3: Daily Snapshots (last 10 days only to keep light)
                         try:
-                            ws_snap = sh.worksheet("daily_snapshots")
-                            snap_data = ws_snap.get_all_values()
-                            snap_df = pd.DataFrame(snap_data[1:], columns=snap_data[0])
+                            snap_df = xl.parse("daily_snapshots")
                             if "Date" in snap_df.columns:
-                                last_10_dates = sorted(snap_df["Date"].unique().tolist(), reverse=True)[:10]
+                                last_10_dates = sorted(snap_df["Date"].dropna().unique().tolist(), reverse=True)[:10]
                                 snap_df = snap_df[snap_df["Date"].isin(last_10_dates)]
                             snap_df.to_excel(writer, sheet_name="Daily Snapshots (10d)", index=False)
                         except Exception as e:
