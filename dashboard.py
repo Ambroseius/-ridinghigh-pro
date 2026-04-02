@@ -1772,7 +1772,9 @@ def post_analysis_page():
             return ""
 
     for col in filtered[display_cols].select_dtypes(include="number").columns:
-        filtered[col] = filtered[col].round(2)
+        filtered[col] = pd.to_numeric(filtered[col], errors="coerce").round(2)
+    if "Score" in filtered.columns:
+        filtered["Score"] = pd.to_numeric(filtered["Score"], errors="coerce").round(2)
     styled = filtered[display_cols].style
     for col in ["TP10_Hit", "TP15_Hit", "TP20_Hit"]:
         if col in display_cols:
@@ -1807,7 +1809,7 @@ def post_analysis_page():
 
         tr = {
             "Ticker":    ticker,
-            "Score":     row.get("Score", ""),
+            "Score":     round(pd.to_numeric(row.get("Score", 0), errors="coerce"), 2),
             "ScanDate":  row.get("ScanDate", ""),
             "Entry $":   f"${scan_price:.2f}" if scan_price else "—",
         }
