@@ -2156,7 +2156,9 @@ def post_analysis_page():
 
                         # Tab 3: Daily Snapshots (last 10 days only to keep light)
                         try:
-                            snap_df = xl.parse("daily_snapshots")
+                            ws_snap = sh.worksheet("daily_snapshots")
+                            snap_data = ws_snap.get_all_values()
+                            snap_df = pd.DataFrame(snap_data[1:], columns=snap_data[0])
                             if "Date" in snap_df.columns:
                                 last_10_dates = sorted(snap_df["Date"].dropna().unique().tolist(), reverse=True)[:10]
                                 snap_df = snap_df[snap_df["Date"].isin(last_10_dates)]
