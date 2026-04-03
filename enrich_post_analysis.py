@@ -51,8 +51,33 @@ def fetch_d0_data(ticker: str, scan_date: str) -> dict:
     return {}
 
 
+def is_trading_day(date=None):
+    """Returns True if date is a NASDAQ trading day. Falls back to weekday check."""
+    import pytz
+    if date is None:
+        date = datetime.now(pytz.timezone("America/Lima")).date()
+    try:
+        import pandas_market_calendars as mcal
+        nyse = mcal.get_calendar("NASDAQ")
+        schedule = nyse.schedule(
+            start_date=date.strftime("%Y-%m-%d"),
+            end_date=date.strftime("%Y-%m-%d")
+        )
+        return not schedule.empty
+    except ImportError:
+        print("[Enrich] ⚠️ pandas_market_calendars not installed — using weekday-only check")
+        return date.weekday() < 5
+
+
 def run():
     print("[Enrich] Starting v2...")
+
+    # ── Check if today is a trading day ────────────────────────────────────
+    import pytz
+    today = datetime.now(pytz.timezone("America/Lima")).date()
+    if not is_trading_day(today):
+        print(f"[Enrich] ⛔ {today} is not a trading day — skipping.")
+        return
 
     gc = _get_client()
     sh = gc.open_by_key(SPREADSHEET_ID)

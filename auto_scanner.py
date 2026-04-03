@@ -28,12 +28,32 @@ def is_market_hours():
     now = get_peru_time()
     market_open  = dt_time(8, 30)
     market_close = dt_time(15, 0)
-    is_weekday   = now.weekday() < 5
-    return is_weekday and market_open <= now.time() <= market_close
+    return is_trading_day(now.date()) and market_open <= now.time() <= market_close
 
 def is_snapshot_time():
     now = get_peru_time()
     return dt_time(14, 55) <= now.time() < dt_time(15, 5)
+
+def is_trading_day(date=None):
+    """
+    Returns True if the given date (default: today Peru time) is a NASDAQ trading day.
+    Checks weekends + US market holidays via pandas_market_calendars.
+    Falls back to weekday-only check if library unavailable.
+    """
+    if date is None:
+        date = get_peru_time().date()
+    try:
+        import pandas_market_calendars as mcal
+        nyse = mcal.get_calendar("NASDAQ")
+        schedule = nyse.schedule(
+            start_date=date.strftime("%Y-%m-%d"),
+            end_date=date.strftime("%Y-%m-%d")
+        )
+        return not schedule.empty
+    except ImportError:
+        # Fallback: weekday only (no holiday detection)
+        print("[Scanner] ⚠️ pandas_market_calendars not installed — using weekday-only check")
+        return date.weekday() < 5
 
 # ── Google Sheets client ─────────────────────────────────────────────────────
 def get_gsheets_client():

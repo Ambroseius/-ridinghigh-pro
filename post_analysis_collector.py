@@ -216,8 +216,31 @@ def calculate_stats(scan_price: float, ohlc: dict) -> dict:
     }
 
 
+def is_trading_day(date=None):
+    """Returns True if date is a NASDAQ trading day. Falls back to weekday check."""
+    if date is None:
+        date = datetime.now(PERU_TZ).date()
+    try:
+        import pandas_market_calendars as mcal
+        nyse = mcal.get_calendar("NASDAQ")
+        schedule = nyse.schedule(
+            start_date=date.strftime("%Y-%m-%d"),
+            end_date=date.strftime("%Y-%m-%d")
+        )
+        return not schedule.empty
+    except ImportError:
+        print("[Collector] ⚠️ pandas_market_calendars not installed — using weekday-only check")
+        return date.weekday() < 5
+
+
 def run():
-    print(f"[Collector] Starting post-analysis collection v2...")
+    print(f"[Collector] Starting post-analysis collection v3...")
+
+    # ── Check if today is a trading day ────────────────────────────────────
+    today = datetime.now(PERU_TZ).date()
+    if not is_trading_day(today):
+        print(f"[Collector] ⛔ {today} is not a trading day (holiday or weekend) — skipping.")
+        return
 
     from gsheets_sync import _get_client, SPREADSHEET_ID, TAB_DAILY_SNAPSHOT
     gc = _get_client()
