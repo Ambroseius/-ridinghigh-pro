@@ -194,8 +194,8 @@ def calculate_score(metrics):
         score += min(metrics['atrx'] / 15, 1) * 10
     except: pass
     try:
-        if metrics['run_up'] < 0:
-            score += min(abs(metrics['run_up']) / 5, 1) * 5
+        if metrics['run_up'] > 0:
+            score += min(metrics['run_up'] / 50, 1) * 5
     except: pass
     try:
         score += min(metrics['float_pct'] / 10, 1) * 5
