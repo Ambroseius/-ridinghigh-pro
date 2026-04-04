@@ -28,32 +28,12 @@ def is_market_hours():
     now = get_peru_time()
     market_open  = dt_time(8, 30)
     market_close = dt_time(15, 0)
-    return is_trading_day(now.date()) and market_open <= now.time() <= market_close
+    is_weekday   = now.weekday() < 5
+    return is_weekday and market_open <= now.time() <= market_close
 
 def is_snapshot_time():
     now = get_peru_time()
-    return dt_time(14, 55) <= now.time() < dt_time(15, 5)
-
-def is_trading_day(date=None):
-    """
-    Returns True if the given date (default: today Peru time) is a NASDAQ trading day.
-    Checks weekends + US market holidays via pandas_market_calendars.
-    Falls back to weekday-only check if library unavailable.
-    """
-    if date is None:
-        date = get_peru_time().date()
-    try:
-        import pandas_market_calendars as mcal
-        nyse = mcal.get_calendar("NASDAQ")
-        schedule = nyse.schedule(
-            start_date=date.strftime("%Y-%m-%d"),
-            end_date=date.strftime("%Y-%m-%d")
-        )
-        return not schedule.empty
-    except ImportError:
-        # Fallback: weekday only (no holiday detection)
-        print("[Scanner] ⚠️ pandas_market_calendars not installed — using weekday-only check")
-        return date.weekday() < 5
+    return dt_time(14, 59) <= now.time() < dt_time(15, 0)
 
 # ── Google Sheets client ─────────────────────────────────────────────────────
 def get_gsheets_client():
@@ -343,50 +323,13 @@ def run_scan():
 
     print(f"📊 Analyzing {len(finviz_df)} stocks...")
     results = []
-    scanned_tickers = set()
     for idx, row in finviz_df.iterrows():
         ticker = row['Ticker']
-        scanned_tickers.add(ticker)
         data = analyze_ticker(ticker, row)
         if data:
             results.append(data)
             print(f"  ✅ {ticker}: {data['Score']}")
         time.sleep(0.1)
-
-    # ── Scan tracked tickers not in FINVIZ ──────────────────────────────────
-    try:
-        gc = get_gsheets_client()
-        sh = gc.open_by_key(SPREADSHEET_ID)
-        ws_tl = sh.worksheet("timeline_live")
-        tl_data = ws_tl.get_all_values()
-        if len(tl_data) > 1:
-            tl_df = pd.DataFrame(tl_data[1:], columns=tl_data[0])
-            today_str = now_peru.strftime('%Y-%m-%d')
-            tracked = set(tl_df[tl_df['Date'] == today_str]['Ticker'].unique())
-            missing = tracked - scanned_tickers
-            if missing:
-                print(f"📌 Tracking {len(missing)} missing tickers...")
-                for ticker in missing:
-                    try:
-                        stock = yf.Ticker(ticker)
-                        hist = stock.history(period='60d')
-                        if hist.empty or len(hist) < 2:
-                            continue
-                        info = stock.info
-                        price = hist.iloc[-1]['Close']
-                        prev = hist.iloc[-2]['Close']
-                        change = ((price - prev) / prev) * 100
-                        volume = int(hist.iloc[-1]['Volume'])
-                        finviz_row = {'Price': price, 'Change': change/100, 'Volume': str(volume), 'Market Cap': None}
-                        data = analyze_ticker(ticker, finviz_row)
-                        if data:
-                            results.append(data)
-                            print(f"  📌 {ticker}: {data['Score']}")
-                        time.sleep(0.2)
-                    except:
-                        pass
-    except:
-        pass
 
     if not results:
         print("❌ No results")
@@ -397,9 +340,8 @@ def run_scan():
 
     # ── Save to Google Sheets ────────────────────────────────────────────────
     try:
-        if 'gc' not in dir() or gc is None:
-            gc = get_gsheets_client()
-            sh = gc.open_by_key(SPREADSHEET_ID)
+        gc = get_gsheets_client()
+        sh = gc.open_by_key(SPREADSHEET_ID)
         scan_time = now_peru.strftime('%H:%M')
         today     = now_peru.strftime('%Y-%m-%d')
 
@@ -408,14 +350,17 @@ def run_scan():
         existing = ws_timeline.get_all_values()
         results_df = pd.DataFrame(results)
 
-        new_rows = results_df.copy()
-        new_rows.insert(0, 'ScanTime', scan_time)
-        new_rows.insert(0, 'Date', today)
         if len(existing) <= 1:
-            df_to_sheet(ws_timeline, new_rows)
+            results_df.insert(0, 'ScanTime', scan_time)
+            results_df.insert(0, 'Date', today)
+            df_to_sheet(ws_timeline, results_df)
         else:
-            rows_to_add = new_rows.astype(str).values.tolist()
-            ws_timeline.append_rows(rows_to_add)
+            ex_df = pd.DataFrame(existing[1:], columns=existing[0])
+            new_rows = results_df.copy()
+            new_rows.insert(0, 'ScanTime', scan_time)
+            new_rows.insert(0, 'Date', today)
+            combined = pd.concat([ex_df, new_rows], ignore_index=True)
+            df_to_sheet(ws_timeline, combined)
 
         # Daily snapshot at 14:59
         if is_snapshot_time():
@@ -431,43 +376,6 @@ def run_scan():
                 combined_snap = pd.concat([other, snap_df], ignore_index=True)
                 df_to_sheet(ws_snap, combined_snap)
             print("📸 Daily snapshot saved!")
-            # Save portfolio at 14:59
-            ws_port = get_or_create_sheet(sh, "portfolio")
-            high_score = results_df[results_df['Score'].astype(float) >= 60].copy()
-            if not high_score.empty:
-                existing_port = ws_port.get_all_values()
-                new_positions = []
-                existing_keys = set()
-                if len(existing_port) > 1:
-                    ex_port = pd.DataFrame(existing_port[1:], columns=existing_port[0])
-                    existing_keys = set(ex_port['PositionKey'].values) if 'PositionKey' in ex_port.columns else set()
-                else:
-                    ex_port = pd.DataFrame()
-                for _, row in high_score.iterrows():
-                    key = f"{row['Ticker']}_{today}"
-                    if key not in existing_keys:
-                        new_positions.append({'PositionKey': key, 'Date': today, 'Ticker': row['Ticker'], 'Score': round(float(row['Score']), 2), 'BuyPrice': round(float(row['Price']), 2), 'Status': 'Open'})
-                if new_positions:
-                    new_port_df = pd.DataFrame(new_positions)
-                    combined_port = pd.concat([ex_port, new_port_df], ignore_index=True) if not ex_port.empty else new_port_df
-                    df_to_sheet(ws_port, combined_port)
-                    print(f"💼 Portfolio saved! {len(new_positions)} new stocks")
-            # Save timeline archive at 14:59
-            ws_arch = get_or_create_sheet(sh, "timeline_archive")
-            # Save full day timeline from timeline_live
-            tl_all = ws_timeline.get_all_values()
-            if len(tl_all) > 1:
-                tl_full = pd.DataFrame(tl_all[1:], columns=tl_all[0])
-                today_tl = tl_full[tl_full['Date'] == today].copy()
-                existing_arch = ws_arch.get_all_values()
-                if len(existing_arch) <= 1:
-                    df_to_sheet(ws_arch, today_tl)
-                else:
-                    ex_arch = pd.DataFrame(existing_arch[1:], columns=existing_arch[0])
-                    other_arch = ex_arch[ex_arch['Date'] != today]
-                    combined_arch = pd.concat([other_arch, today_tl], ignore_index=True)
-                    df_to_sheet(ws_arch, combined_arch)
-                print("📦 Timeline archive saved!")
 
         print(f"✅ Saved {len(results)} stocks to Google Sheets at {scan_time}")
 
