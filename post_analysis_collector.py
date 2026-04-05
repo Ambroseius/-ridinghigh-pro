@@ -1,10 +1,16 @@
+#!/usr/bin/env python3
 """
-RidingHigh Pro - Post Analysis Collector v3
-Runs every morning via GitHub Actions.
-For every stock with Score >= 60 from the daily_snapshots sheet,
-fetches D+1 to D+5 OHLC data and saves to post_analysis sheet.
+RidingHigh Pro - Post Analysis Collector v5
+Collects comprehensive data for every stock with Score >= 60.
 
-FIX v2: Now properly updates rows that have MaxDrop% but missing D5 data.
+NEW in v5:
+  - D0_Open/High/Low from Yahoo Finance
+  - D0_Drop%_from_High 
+  - RealFloat, RealFloat_M, Sector, Industry, MarketCapCategory
+  - Price_vs_SMA20, Consecutive_Up, DaysSinceIPO
+  - FirstScanTime, LastScanTime, ScanCount
+  - ScoreAtFirst, ScoreAtLast, ScoreMax, ScoreMin, ScoreStd
+  - Removed: Float% (was wrong formula)
 """
 
 import pandas as pd
@@ -13,6 +19,7 @@ from datetime import datetime, timedelta
 import pytz
 import sys
 import os
+import time
 
 sys.path.insert(0, os.path.expanduser("~/RidingHighPro"))
 from gsheets_sync import load_post_analysis_from_sheets, save_post_analysis_to_sheets
@@ -25,96 +32,74 @@ CATALYST_CATEGORIES = [
     "lawsuit", "share_dilution", "reverse_split", "no_clear_reason"
 ]
 
-def fetch_finviz_news(ticker: str, scan_date: str) -> list:
-    """Fetch news headlines from FINVIZ filtered by date range."""
-    import urllib.request, re, time
-    from datetime import datetime, timedelta
+MIN_SCORE   = 60
+DAYS_FORWARD = 5
 
-    scan_dt = datetime.strptime(scan_date, "%Y-%m-%d")
+
+# ── Catalyst analysis (unchanged from v4) ────────────────────────────────────
+def fetch_finviz_news(ticker: str, scan_date: str) -> list:
+    import urllib.request, re
+    from datetime import datetime, timedelta
+    scan_dt   = datetime.strptime(scan_date, "%Y-%m-%d")
     date_from = scan_dt - timedelta(days=30)
     date_to   = scan_dt + timedelta(days=1)
-
     for attempt in range(1, 4):
         try:
             url = f"https://finviz.com/quote.ashx?t={ticker}&p=d"
             req = urllib.request.Request(url, headers={
                 "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
             })
-            response = urllib.request.urlopen(req, timeout=10)
-            html = response.read().decode("utf-8")
-
+            html = urllib.request.urlopen(req, timeout=10).read().decode("utf-8")
             dates  = re.findall(r'width="130"[^>]*>\s*(.*?)\s*</td>', html)
             titles = re.findall(r'class="tab-link-news"[^>]*>\s*(.*?)\s*</a>', html)
-
             relevant = []
             for date_str, title in zip(dates, titles):
-                title = title.strip().lower()
                 try:
                     pub_dt = datetime.strptime(date_str.strip()[:9], "%b-%d-%y")
                     if date_from <= pub_dt <= date_to:
-                        relevant.append(title)
-                except:
-                    continue
-
-            print(f"[Collector] FINVIZ: {len(relevant)} headlines for {ticker} around {scan_date}")
+                        relevant.append(title.strip().lower())
+                except: continue
             return relevant
-
         except Exception as e:
-            print(f"[Collector] FINVIZ attempt {attempt}/3 failed for {ticker}: {e}")
+            print(f"[Collector] FINVIZ attempt {attempt}/3 failed: {e}")
             time.sleep(2)
     return []
 
 
 def analyze_catalyst(ticker: str, scan_date: str) -> dict:
-    """Analyze catalyst using FINVIZ news + keyword matching."""
-    import urllib.request, urllib.parse, time, re
-    from datetime import datetime, timedelta
-
     KEYWORDS = {
-        "merger_acquisition":     ["merger", "acquisition", "acquires", "acquired", "merges", "buyout", "takeover", "combines with", "to buy", "to acquire"],
-        "fda_approval":           ["fda approved", "fda approval", "fda clearance", "fda grants", "fda accepts", "orphan drug", "breakthrough designation", "nda approved", "bla approved"],
-        "clinical_trial":         ["phase 1", "phase 2", "phase 3", "clinical trial", "clinical study", "ind application", "topline data", "trial results", "patient enrollment"],
-        "marketing_announcement": ["partnership", "collaboration agreement", "license agreement", "commercialization", "distribution agreement", "strategic alliance"],
-        "earnings_report":        ["earnings report", "quarterly results", "q1 results", "q2 results", "q3 results", "q4 results", "annual results", "revenue report", "full year results"],
-        "regulatory_compliance":  ["nasdaq compliance", "nyse compliance", "regained compliance", "listing compliance", "deficiency notice", "bid price", "non-compliance"],
-        "lawsuit":                ["class action", "sec charges", "sec investigation", "securities fraud", "lawsuit filed", "legal action", "complaint filed"],
-        "share_dilution":         ["public offering", "private placement", "at-the-market", "atm offering", "registered direct", "shares offered", "warrant exercise", "capital raise"],
-        "reverse_split":          ["reverse stock split", "reverse split", "1-for-", "share consolidation"],
+        "merger_acquisition":     ["merger","acquisition","acquires","acquired","buyout","takeover","to buy","to acquire"],
+        "fda_approval":           ["fda approved","fda approval","fda clearance","fda grants","orphan drug","breakthrough designation","nda approved"],
+        "clinical_trial":         ["phase 1","phase 2","phase 3","clinical trial","topline data","trial results"],
+        "marketing_announcement": ["partnership","collaboration agreement","license agreement","commercialization","strategic alliance"],
+        "earnings_report":        ["earnings report","quarterly results","q1 results","q2 results","q3 results","q4 results","revenue report"],
+        "regulatory_compliance":  ["nasdaq compliance","regained compliance","deficiency notice","bid price","non-compliance"],
+        "lawsuit":                ["class action","sec charges","sec investigation","securities fraud","lawsuit filed"],
+        "share_dilution":         ["public offering","private placement","at-the-market","atm offering","registered direct","capital raise"],
+        "reverse_split":          ["reverse stock split","reverse split","1-for-","share consolidation"],
         "no_clear_reason":        []
     }
-
-    relevant_headlines = fetch_finviz_news(ticker, scan_date)
-
-    if not relevant_headlines:
+    headlines = fetch_finviz_news(ticker, scan_date)
+    if not headlines:
         result = {f"cat_{k}": 0 for k in CATALYST_CATEGORIES}
         result["cat_no_clear_reason"] = 1
         return result
-
-    combined = " ".join(relevant_headlines)
-    cats = {}
+    combined  = " ".join(headlines)
+    cats      = {}
     any_found = False
     for category, keywords in KEYWORDS.items():
-        if category == "no_clear_reason":
-            continue
+        if category == "no_clear_reason": continue
         found = any(kw in combined for kw in keywords)
         cats[f"cat_{category}"] = 1 if found else 0
-        if found:
-            any_found = True
-
+        if found: any_found = True
     cats["cat_no_clear_reason"] = 0 if any_found else 1
-    print(f"[Collector] ✅ {ticker}: {[k.replace('cat_','') for k,v in cats.items() if v==1]}")
     return cats
 
 
-MIN_SCORE = 60
-DAYS_FORWARD = 5
-
-
+# ── OHLC fetch ────────────────────────────────────────────────────────────────
 def get_trading_days_after(scan_date_str: str, n: int) -> list:
-    """Return n trading days after scan_date."""
     scan_date = datetime.strptime(scan_date_str, "%Y-%m-%d")
-    days = []
-    current = scan_date + timedelta(days=1)
+    days, current = [], scan_date + timedelta(days=1)
     while len(days) < n:
         if current.weekday() < 5:
             days.append(current.strftime("%Y-%m-%d"))
@@ -123,43 +108,26 @@ def get_trading_days_after(scan_date_str: str, n: int) -> list:
 
 
 def is_complete(existing_row: pd.Series, trading_days: list) -> bool:
-    """
-    Returns True only if ALL available trading days have Close data stored.
-    A row is NOT complete if any available day is missing its Close value.
-    """
     today_dt = datetime.now()
     for i, day in enumerate(trading_days, 1):
-        # Only check days that have already passed
-        if datetime.strptime(day, "%Y-%m-%d") >= today_dt:
-            break
-        col = f"D{i}_Close"
-        val = existing_row.get(col, None)
-        if val is None or str(val).strip() in ["", "nan", "None"]:
-            return False
+        if datetime.strptime(day, "%Y-%m-%d") >= today_dt: break
+        val = existing_row.get(f"D{i}_Close", None)
+        if val is None or str(val).strip() in ["", "nan", "None"]: return False
     return True
 
 
 def fetch_ohlc_for_days(ticker: str, trading_days: list) -> dict:
-    """Fetch OHLC for specific trading days using Yahoo Finance."""
-    import time
-    max_retries = 5
-    for attempt in range(1, max_retries + 1):
+    for attempt in range(1, 6):
         try:
-            start = trading_days[0]
-            end_dt = datetime.strptime(trading_days[-1], "%Y-%m-%d") + timedelta(days=3)
-            end = end_dt.strftime("%Y-%m-%d")
-
-            hist = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+            start   = trading_days[0]
+            end_dt  = datetime.strptime(trading_days[-1], "%Y-%m-%d") + timedelta(days=3)
+            hist    = yf.download(ticker, start=start, end=end_dt.strftime("%Y-%m-%d"),
+                                  progress=False, auto_adjust=True)
             if hist.empty:
-                print(f"[Collector] {ticker} attempt {attempt}/{max_retries} — empty data")
-                time.sleep(2)
-                continue
-
+                time.sleep(2); continue
             if isinstance(hist.columns, pd.MultiIndex):
                 hist.columns = hist.columns.get_level_values(0)
-            hist.columns = [str(c) for c in hist.columns]
             hist.index = pd.to_datetime(hist.index).strftime("%Y-%m-%d")
-
             result = {}
             for i, day in enumerate(trading_days, 1):
                 if day in hist.index:
@@ -169,112 +137,162 @@ def fetch_ohlc_for_days(ticker: str, trading_days: list) -> dict:
                     result[f"D{i}_Low"]   = round(float(row["Low"]), 4)
                     result[f"D{i}_Close"] = round(float(row["Close"]), 4)
                 else:
-                    result[f"D{i}_Open"]  = None
-                    result[f"D{i}_High"]  = None
-                    result[f"D{i}_Low"]   = None
-                    result[f"D{i}_Close"] = None
+                    for suffix in ["Open","High","Low","Close"]:
+                        result[f"D{i}_{suffix}"] = None
             return result
-
         except Exception as e:
-            print(f"[Collector] {ticker} attempt {attempt}/{max_retries} error: {e}")
+            print(f"[Collector] {ticker} attempt {attempt} error: {e}")
             time.sleep(2)
-
-    print(f"[Collector] {ticker} — failed after {max_retries} attempts")
     return {}
 
 
 def calculate_stats(scan_price: float, ohlc: dict) -> dict:
-    """Calculate MaxDrop%, BestDay, TP hits from all available lows."""
-    lows = []
-    for i in range(1, 6):
-        low = ohlc.get(f"D{i}_Low")
-        if low is not None:
-            lows.append((i, low))
-
+    lows = [(i, ohlc[f"D{i}_Low"]) for i in range(1,6) if ohlc.get(f"D{i}_Low") is not None]
     if not lows or scan_price <= 0:
-        return {"MaxDrop%": None, "BestDay": None,
-                "TP10_Hit": 0, "TP15_Hit": 0, "TP20_Hit": 0}
-
+        return {"MaxDrop%": None, "BestDay": None, "TP10_Hit": 0, "TP15_Hit": 0, "TP20_Hit": 0, "D1_Gap%": None}
     best_day, min_low = min(lows, key=lambda x: x[1])
     max_drop = round((min_low - scan_price) / scan_price * 100, 2)
-
-    tp10 = 1 if min_low <= scan_price * 0.90 else 0
-    tp15 = 1 if min_low <= scan_price * 0.85 else 0
-    tp20 = 1 if min_low <= scan_price * 0.80 else 0
-
-    # D1_Gap%: how much D1 opened vs ScanPrice (positive = gapped up = bad for short)
-    d1_open = ohlc.get("D1_Open")
-    d1_gap = round((d1_open - scan_price) / scan_price * 100, 2) if d1_open and scan_price > 0 else None
-
+    d1_open  = ohlc.get("D1_Open")
+    d1_gap   = round((d1_open - scan_price) / scan_price * 100, 2) if d1_open and scan_price > 0 else None
     return {
-        "MaxDrop%": max_drop,
-        "BestDay":  best_day,
-        "TP10_Hit": tp10,
-        "TP15_Hit": tp15,
-        "TP20_Hit": tp20,
+        "MaxDrop%": max_drop, "BestDay": best_day,
+        "TP10_Hit": 1 if min_low <= scan_price * 0.90 else 0,
+        "TP15_Hit": 1 if min_low <= scan_price * 0.85 else 0,
+        "TP20_Hit": 1 if min_low <= scan_price * 0.80 else 0,
         "D1_Gap%":  d1_gap,
     }
 
 
+# ── NEW: D0 OHLC + fundamental data ──────────────────────────────────────────
+def fetch_d0_and_fundamental(ticker: str, scan_date: str) -> dict:
+    result = {}
+    try:
+        stock  = yf.Ticker(ticker)
+        scan_dt = datetime.strptime(scan_date, "%Y-%m-%d")
+        start  = (scan_dt - timedelta(days=60)).strftime("%Y-%m-%d")
+        end    = (scan_dt + timedelta(days=2)).strftime("%Y-%m-%d")
+        hist   = yf.download(ticker, start=start, end=end, progress=False, auto_adjust=True)
+
+        if isinstance(hist.columns, pd.MultiIndex):
+            hist.columns = hist.columns.get_level_values(0)
+        hist.index = pd.to_datetime(hist.index).strftime("%Y-%m-%d")
+
+        # D0 OHLC
+        if scan_date in hist.index:
+            row = hist.loc[scan_date]
+            result["D0_Open"] = round(float(row["Open"]), 4)
+            result["D0_High"] = round(float(row["High"]), 4)
+            result["D0_Low"]  = round(float(row["Low"]), 4)
+            if float(row["High"]) > 0:
+                result["D0_Drop%_from_High"] = round(
+                    (float(row["Close"]) - float(row["High"])) / float(row["High"]) * 100, 2)
+
+        # SMA20
+        hist_before = hist[hist.index <= scan_date]
+        if len(hist_before) >= 20:
+            sma20 = hist_before["Close"].iloc[-20:].mean()
+            scan_close = hist_before["Close"].iloc[-1]
+            result["Price_vs_SMA20"] = round(
+                (float(scan_close) - float(sma20)) / float(sma20) * 100, 2)
+
+        # Consecutive up days
+        hist_pre = hist[hist.index < scan_date]
+        if len(hist_pre) >= 2:
+            consec, closes = 0, hist_pre["Close"].values
+            for i in range(len(closes)-1, 0, -1):
+                if closes[i] > closes[i-1]: consec += 1
+                else: break
+            result["Consecutive_Up"] = consec
+
+        # Fundamental from Yahoo
+        info = stock.info
+        float_shares = info.get("floatShares", None)
+        if float_shares:
+            result["RealFloat"]   = int(float_shares)
+            result["RealFloat_M"] = round(float_shares / 1_000_000, 2)
+        result["Sector"]   = info.get("sector", "")
+        result["Industry"] = info.get("industry", "")
+        mc = info.get("marketCap", 0) or 0
+        result["MarketCapCategory"] = "Micro" if mc < 300_000_000 else ("Small" if mc < 2_000_000_000 else "Mid+")
+        ipo = info.get("firstTradeDateEpochUtc", None)
+        if ipo:
+            result["DaysSinceIPO"] = (scan_dt - datetime.fromtimestamp(ipo)).days
+
+    except Exception as e:
+        print(f"[Collector] D0/fundamental error for {ticker}: {e}")
+    return result
+
+
+# ── NEW: timeline stats ───────────────────────────────────────────────────────
+def fetch_timeline_stats(ticker: str, scan_date: str, tl_df: pd.DataFrame) -> dict:
+    result = {}
+    try:
+        day = tl_df[(tl_df["Ticker"] == ticker) & (tl_df["Date"] == scan_date)].copy()
+        if day.empty: return result
+        day["Score"] = pd.to_numeric(day["Score"], errors="coerce")
+        day = day.dropna(subset=["Score"])
+        if day.empty: return result
+        if "ScanTime" in day.columns:
+            times = day["ScanTime"].tolist()
+            result["FirstScanTime"] = times[0]
+            result["LastScanTime"]  = times[-1]
+        result["ScanCount"]    = len(day)
+        result["ScoreAtFirst"] = round(day["Score"].iloc[0], 2)
+        result["ScoreAtLast"]  = round(day["Score"].iloc[-1], 2)
+        result["ScoreMax"]     = round(day["Score"].max(), 2)
+        result["ScoreMin"]     = round(day["Score"].min(), 2)
+        result["ScoreStd"]     = round(day["Score"].std(), 2)
+    except Exception as e:
+        print(f"[Collector] Timeline error for {ticker} {scan_date}: {e}")
+    return result
+
+
 def is_trading_day(date=None):
-    """Returns True if date is a NASDAQ trading day. Falls back to weekday check."""
-    if date is None:
-        date = datetime.now(PERU_TZ).date()
+    if date is None: date = datetime.now(PERU_TZ).date()
     try:
         import pandas_market_calendars as mcal
         nyse = mcal.get_calendar("NASDAQ")
-        schedule = nyse.schedule(
-            start_date=date.strftime("%Y-%m-%d"),
-            end_date=date.strftime("%Y-%m-%d")
-        )
-        return not schedule.empty
+        return not nyse.schedule(start_date=date.strftime("%Y-%m-%d"),
+                                  end_date=date.strftime("%Y-%m-%d")).empty
     except ImportError:
-        print("[Collector] ⚠️ pandas_market_calendars not installed — using weekday-only check")
         return date.weekday() < 5
 
 
+# ── Main ──────────────────────────────────────────────────────────────────────
 def run():
-    print(f"[Collector] Starting post-analysis collection v3...")
-
-    # ── Check if today is a trading day ────────────────────────────────────
+    print(f"[Collector] Starting post-analysis collector v5...")
     today = datetime.now(PERU_TZ).date()
     if not is_trading_day(today):
-        print(f"[Collector] ⛔ {today} is not a trading day (holiday or weekend) — skipping.")
+        print(f"[Collector] ⛔ {today} not a trading day — skipping.")
         return
 
     from gsheets_sync import _get_client, SPREADSHEET_ID, TAB_DAILY_SNAPSHOT
     gc = _get_client()
     if gc is None:
-        print("[Collector] ❌ Cannot connect to Google Sheets")
-        return
+        print("[Collector] ❌ Cannot connect to Google Sheets"); return
 
     sh = gc.open_by_key(SPREADSHEET_ID)
 
-    try:
-        ws = sh.worksheet(TAB_DAILY_SNAPSHOT)
-        data = ws.get_all_values()
-    except Exception as e:
-        print(f"[Collector] ❌ Cannot load snapshots: {e}")
-        return
-
+    # Load snapshots
+    ws      = sh.worksheet(TAB_DAILY_SNAPSHOT)
+    data    = ws.get_all_values()
     if len(data) <= 1:
-        print("[Collector] No snapshot data found")
-        return
-
+        print("[Collector] No snapshot data"); return
     snapshots_df = pd.DataFrame(data[1:], columns=data[0])
     snapshots_df["Score"] = pd.to_numeric(snapshots_df.get("Score", 0), errors="coerce")
-
     candidates = snapshots_df[snapshots_df["Score"] >= MIN_SCORE].copy()
-    print(f"[Collector] Found {len(candidates)} stocks with score >= {MIN_SCORE}")
+    print(f"[Collector] {len(candidates)} stocks with score >= {MIN_SCORE}")
+    if candidates.empty: return
 
-    if candidates.empty:
-        print("[Collector] Nothing to process")
-        return
+    # Load timeline_live for stats
+    print("[Collector] Loading timeline_live...")
+    ws_tl   = sh.worksheet("timeline_live")
+    tl_data = ws_tl.get_all_values()
+    tl_df   = pd.DataFrame(tl_data[1:], columns=tl_data[0]) if len(tl_data) > 1 else pd.DataFrame()
 
     existing_df = load_post_analysis_from_sheets()
-
-    today_str = datetime.now(PERU_TZ).strftime("%Y-%m-%d")
-    new_rows = []
+    today_str   = datetime.now(PERU_TZ).strftime("%Y-%m-%d")
+    new_rows    = []
 
     for _, row in candidates.iterrows():
         ticker     = str(row.get("Ticker", "")).strip()
@@ -282,53 +300,40 @@ def run():
         score      = float(row.get("Score", 0))
         scan_price = pd.to_numeric(row.get("Price", 0), errors="coerce") or 0
 
-        if not ticker or not scan_date:
-            continue
+        if not ticker or not scan_date or scan_date > today_str: continue
 
-        if scan_date > today_str:
-            print(f"[Collector] Skipping {ticker} ({scan_date}) — future date")
-            continue
-
-        # All 5 trading days for this stock
         trading_days = get_trading_days_after(scan_date, DAYS_FORWARD)
-
-        # Check if already in existing_df
         existing_match = pd.DataFrame()
         if not existing_df.empty and "Ticker" in existing_df.columns:
             existing_match = existing_df[
-                (existing_df["Ticker"] == ticker) &
-                (existing_df["ScanDate"] == scan_date)
-            ]
+                (existing_df["Ticker"] == ticker) & (existing_df["ScanDate"] == scan_date)]
 
-        if not existing_match.empty:
-            existing_row = existing_match.iloc[0]
-            if is_complete(existing_row, trading_days):
-                print(f"[Collector] Complete: {ticker} {scan_date} — skipping")
-                continue
-            else:
-                print(f"[Collector] Incomplete data for {ticker} {scan_date} — updating")
+        if not existing_match.empty and is_complete(existing_match.iloc[0], trading_days):
+            print(f"[Collector] Complete: {ticker} {scan_date} — skipping")
+            continue
 
-        # Only fetch days that have already passed
+        print(f"[Collector] Processing {ticker} {scan_date}...")
         today_dt = datetime.now()
         available_days = [d for d in trading_days if datetime.strptime(d, "%Y-%m-%d") < today_dt]
-        print(f"[Collector] {ticker} — {len(available_days)}/{DAYS_FORWARD} days available")
-
         ohlc  = fetch_ohlc_for_days(ticker, available_days) if available_days else {}
         stats = calculate_stats(scan_price, ohlc)
 
-        metric_fields = ["MxV","RunUp","RSI","ATRX","REL_VOL","Gap","VWAP","Float%","PriceToHigh","PriceTo52WHigh"]
+        # Score metrics (updated - removed Float%, PriceToHigh, PriceTo52WHigh)
+        metric_fields = ["MxV", "RunUp", "RSI", "ATRX", "REL_VOL", "Gap", "VWAP"]
         metrics = {f: round(pd.to_numeric(row.get(f, None), errors="coerce"), 2) for f in metric_fields}
 
-        # Only re-analyze catalyst if this is a new row
+        # D0 + fundamental
+        d0_fund = fetch_d0_and_fundamental(ticker, scan_date)
+
+        # Timeline stats
+        tl_stats = fetch_timeline_stats(ticker, scan_date, tl_df) if not tl_df.empty else {}
+
+        # Catalyst
         if existing_match.empty:
-            print(f"[Collector] Analyzing catalyst for {ticker}...")
             catalyst_data = analyze_catalyst(ticker, scan_date)
         else:
-            # Preserve existing catalyst data
-            catalyst_data = {}
-            for cat in CATALYST_CATEGORIES:
-                col = f"cat_{cat}"
-                catalyst_data[col] = existing_match.iloc[0].get(col, 0)
+            catalyst_data = {f"cat_{cat}": existing_match.iloc[0].get(f"cat_{cat}", 0)
+                             for cat in CATALYST_CATEGORIES}
 
         new_row = {
             "Ticker":      ticker,
@@ -340,16 +345,18 @@ def run():
             **catalyst_data,
             **{k: round(v, 2) if isinstance(v, float) else v for k, v in ohlc.items()},
             **{k: round(v, 2) if isinstance(v, float) else v for k, v in stats.items()},
+            **d0_fund,
+            **tl_stats,
         }
         new_rows.append(new_row)
+        time.sleep(0.3)
 
     if not new_rows:
-        print("[Collector] No new rows to save")
-        return
+        print("[Collector] No new rows to save"); return
 
     new_df = pd.DataFrame(new_rows)
     save_post_analysis_to_sheets(new_df)
-    print(f"[Collector] ✅ Saved/updated {len(new_rows)} rows in post_analysis")
+    print(f"[Collector] ✅ Saved/updated {len(new_rows)} rows")
 
 
 if __name__ == "__main__":
