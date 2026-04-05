@@ -23,7 +23,7 @@ jobs:
 
       - name: Create credentials file
         run: |
-          echo '${{ secrets.GCP_SERVICE_ACCOUNT }}' > google_credentials.json
+          echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > google_credentials.json
 
       - name: Run Post Analysis Collector
         run: |
