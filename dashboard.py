@@ -1375,7 +1375,7 @@ def main_page():
             except:
                 return ''
         
-        styled_timeline = df_timeline.style.applymap(color_score).format("{:.2f}")
+        styled_timeline = df_timeline.style.map(color_score).format("{:.2f}")
         
         st.dataframe(styled_timeline, use_container_width=True, height=600)
         
@@ -1536,7 +1536,7 @@ def timeline_archive_page():
         except:
             return ''
     
-    styled_df = df.style.applymap(color_score).format("{:.2f}")
+    styled_df = df.style.map(color_score).format("{:.2f}")
     
     st.dataframe(styled_df, use_container_width=True, height=600)
     
@@ -1776,13 +1776,13 @@ def post_analysis_page():
     styled = filtered[display_cols].style
     for col in ["TP10_Hit", "TP15_Hit", "TP20_Hit"]:
         if col in display_cols:
-            styled = styled.applymap(color_tp, subset=[col])
+            styled = styled.map(color_tp, subset=[col])
     if "MaxDrop%" in display_cols:
-        styled = styled.applymap(color_drop, subset=["MaxDrop%"])
+        styled = styled.map(color_drop, subset=["MaxDrop%"])
     if "ScanChange%" in display_cols:
-        styled = styled.applymap(color_change, subset=["ScanChange%"])
+        styled = styled.map(color_change, subset=["ScanChange%"])
     if "EntryChange%" in display_cols:
-        styled = styled.applymap(color_change, subset=["EntryChange%"])
+        styled = styled.map(color_change, subset=["EntryChange%"])
     format_dict = {}
     for col in filtered[display_cols].select_dtypes(include="number").columns:
         if col in ["TP10_Hit", "TP15_Hit", "TP20_Hit", "BestDay"]:
@@ -1836,7 +1836,7 @@ def post_analysis_page():
         for col in dyn_display.select_dtypes(include="number").columns:
             dyn_display[col] = dyn_display[col].round(2)
         format_dyn = {col: "{:.2f}" for col in dyn_display.select_dtypes(include="number").columns}
-        styled_dyn = dyn_display.style.applymap(color_diff, subset=["הפרש"]).format(format_dyn)
+        styled_dyn = dyn_display.style.map(color_diff, subset=["הפרש"]).format(format_dyn)
         st.dataframe(styled_dyn, use_container_width=True, hide_index=True)
         st.caption("הפרש אדום = הציון המקורי גבוה מהדינמי (אולי מוערך יתר על המידה). ירוק = הציון הדינמי גבוה יותר.")
     else:
@@ -1918,7 +1918,7 @@ def post_analysis_page():
         def color_check(val):
             if val == "✅": return "color: #2ecc71; font-weight: bold"
             return ""
-        styled_cat = cat_display.style.applymap(color_check, subset=label_cols)
+        styled_cat = cat_display.style.map(color_check, subset=label_cols)
         st.dataframe(styled_cat, use_container_width=True, hide_index=True, height=400)
     else:
         st.info("⏳ נתוני catalyst יופיעו כאן לאחר הריצה הראשונה של הקולקטור")
