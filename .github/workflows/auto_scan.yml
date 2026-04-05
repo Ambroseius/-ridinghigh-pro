@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install finvizfinance yfinance pandas gspread google-auth ta pytz
+          pip install finvizfinance yfinance pandas gspread google-auth ta pytz pandas_market_calendars
 
       - name: Run scanner
         env:
